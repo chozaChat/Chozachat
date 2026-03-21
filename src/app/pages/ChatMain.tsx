@@ -1585,17 +1585,17 @@ export default function ChatMain() {
                   {friends.map((friend) => (
                     <div
                       key={friend.id}
-                      className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
+                      className={w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
                         selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
                           ? 'bg-blue-50 dark:bg-blue-900/30'
                           : ''
-                      }`}
+                      }}
                     >
                       <button
                         onClick={() => selectFriendChat(friend)}
                         className="flex items-center gap-3 flex-1 min-w-0"
                       >
-                        <Avatar>
+                        <Avatar className="flex-shrink-0">
                           <AvatarFallback className="bg-gray-300 dark:bg-gray-700">
                             {friend.emoji ? (
                               <span className="text-2xl">{friend.emoji}</span>
@@ -1604,13 +1604,18 @@ export default function ChatMain() {
                             )}
                           </AvatarFallback>
                         </Avatar>
-                        <div className="flex-1 text-left">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-medium dark:text-white">{friend.name}</span>
-                            {friend.verified && renderVerifiedBadge()}
-                            {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
+                        {/* Добавляем min-w-0 и overflow-hidden для текстового контейнера */}
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-medium dark:text-white truncate">{friend.name}</span>
+                            {friend.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
+                            {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor) && (
+                              <span className="flex-shrink-0">
+                                {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
+                              </span>
+                            )}
                           </div>
-                          <div className="text-xs text-gray-500">@{friend.username}</div>
+                          <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
                         </div>
                       </button>
                       <DropdownMenu>
@@ -1629,7 +1634,7 @@ export default function ChatMain() {
                             className="text-red-600"
                             onClick={async (e) => {
                               e.stopPropagation();
-                              if (confirm(`Remove ${friend.name} from your friends?`)) {
+                              if (confirm(Remove ${friend.name} from your friends?)) {
                                 await handleRemoveFriend(friend.id);
                               }
                             }}
