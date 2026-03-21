@@ -1589,8 +1589,8 @@ export default function ChatMain() {
                         selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
                           ? 'bg-blue-50 dark:bg-blue-900/30'
                           : ''
-                      }}
-                    >
+                        }}
+                      >
                       <button
                         onClick={() => selectFriendChat(friend)}
                         className="flex items-center gap-3 flex-1 min-w-0"
