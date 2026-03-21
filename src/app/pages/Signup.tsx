@@ -1,0 +1,188 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
+import { supabase } from "../../lib/supabase";
+import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
+import { toast } from "sonner";
+import { useTheme } from "../contexts/ThemeContext";
+import { Moon, Sun } from "lucide-react";
+
+export default function Signup() {
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // Check for existing session on mount - redirect if already logged in
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          console.log("User already logged in, redirecting to chat...");
+          navigate("/chat");
+        }
+      } catch (error) {
+        console.error("Session check error:", error);
+      }
+    };
+    
+    checkSession();
+  }, [navigate]);
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validate password confirmation
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match!");
+      return;
+    }
+    
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters long!");
+      return;
+    }
+    
+    setLoading(true);
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-a1c86d03/signup`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ email, password, name, username }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(`Signup failed: ${data.error}`);
+        return;
+      }
+
+      toast.success("Account created successfully! Please sign in.");
+      navigate("/");
+    } catch (error) {
+      console.error("Signup error:", error);
+      toast.error("Signup failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="size-full flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 relative">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggleTheme}
+        className="absolute top-4 right-4"
+        title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+      >
+        {theme === 'light' ? <Moon className="size-5" /> : <Sun className="size-5" />}
+      </Button>
+      <Card className="w-full max-w-md dark:bg-gray-900 dark:border-gray-800">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-2xl font-bold dark:text-white">Create an account</CardTitle>
+          <CardDescription className="dark:text-gray-400">Enter your details to get started</CardDescription>
+        </CardHeader>
+        <form onSubmit={handleSignup}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name" className="dark:text-white">Name</Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="John Doe"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="username" className="dark:text-white">Username</Label>
+              <Input
+                id="username"
+                type="text"
+                placeholder="johndoe"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                minLength={3}
+                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email" className="dark:text-white">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="your@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password" className="dark:text-white">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={6}
+                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword" className="dark:text-white">Confirm Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={6}
+                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+              />
+            </div>
+          </CardContent>
+          <CardFooter className="flex flex-col space-y-4">
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? "Creating account..." : "Sign up"}
+            </Button>
+            <div className="text-sm text-center text-gray-600 dark:text-gray-400">
+              Already have an account?{" "}
+              <button
+                type="button"
+                onClick={() => navigate("/")}
+                className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+              >
+                Sign in
+              </button>
+            </div>
+          </CardFooter>
+        </form>
+      </Card>
+    </div>
+  );
+}
