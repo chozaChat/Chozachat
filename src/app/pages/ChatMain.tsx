@@ -1589,8 +1589,8 @@ export default function ChatMain() {
                         selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
                           ? 'bg-blue-50 dark:bg-blue-900/30'
                           : ''
-                        }}
-                      >
+                      }}
+                    >
                       <button
                         onClick={() => selectFriendChat(friend)}
                         className="flex items-center gap-3 flex-1 min-w-0"
@@ -1604,16 +1604,14 @@ export default function ChatMain() {
                             )}
                           </AvatarFallback>
                         </Avatar>
-                        {/* Добавляем min-w-0 и overflow-hidden для текстового контейнера */}
                         <div className="min-w-0 flex-1 text-left">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="font-medium dark:text-white truncate">{friend.name}</span>
                             {friend.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
-                            {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor) && (
-                              <span className="flex-shrink-0">
-                                {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
-                              </span>
-                            )}
+                            {(() => {
+                              const badge = renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor);
+                              return badge ? <span className="flex-shrink-0">{badge}</span> : null;
+                            })()}
                           </div>
                           <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
                         </div>
