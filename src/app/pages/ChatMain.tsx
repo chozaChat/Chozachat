@@ -61,7 +61,7 @@ const COMMON_EMOJIS = [
   "🚴", "🚵", "🎖️", "🏆", "🏅", "🥇", "🥈", "🥉", "🎗️", "🎫",
   "🎟️", "🎪", "🤹", "🎭", "🩰", "🎨", "🎬", "🎤", "🎧", "���",
   "🎹", "🥁", "🎷", "🎺", "🎸", "🪕", "🎻", "🎲", "♟️", "🎯",
-  "🎳", "🎮", "🎰", "🧩"
+  "🎳", "🎮", "🎰", "🧩", "📱", "🪫", "🔋"
 ];
 
 interface User {
@@ -754,11 +754,13 @@ export default function ChatMain() {
       );
       
       if (!response.ok) {
-        console.error("Failed to load messages:", response.status);
+        const errorText = await response.text();
+        console.error("Failed to load messages:", response.status, errorText);
         return;
       }
       
       const data = await response.json();
+      console.log("Loaded messages for", chatType, chatId, ":", data);
       if (data.messages) {
         setMessages(data.messages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -1316,14 +1318,14 @@ export default function ChatMain() {
         }
 
         setMessageText("");
-        loadMessages('news', 'news-channel');
+        loadMessages('news', 'news');
         
         // Broadcast new news message via Realtime using existing channel
         if (messageChannelRef.current) {
           await messageChannelRef.current.send({
             type: 'broadcast',
             event: 'new-message',
-            payload: { chatType: 'news', chatId: 'news-channel' }
+            payload: { chatType: 'news', chatId: 'news' }
           });
         }
         
@@ -1349,10 +1351,13 @@ export default function ChatMain() {
       );
 
       if (!response.ok) {
-        toast.error("Failed to send message");
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error("Failed to send message:", response.status, errorData);
+        toast.error(errorData.error || "Failed to send message");
         return;
       }
 
+      console.log("Message sent successfully");
       setMessageText("");
       loadMessages(selectedChat.type, selectedChat.id);
       
@@ -2294,8 +2299,8 @@ export default function ChatMain() {
       <button
         onClick={() => {
           setMessages([]);
-          setSelectedChat({ type: 'news', id: 'news-channel', name: 'News Channel' });
-          loadMessages('news', 'news-channel');
+          setSelectedChat({ type: 'news', id: 'news', name: 'News Channel' });
+          loadMessages('news', 'news');
         }}
         className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 transition mb-3 border-b border-gray-100 ${
           selectedChat?.type === 'news' ? 'bg-yellow-50' : ''

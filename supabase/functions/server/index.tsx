@@ -1114,7 +1114,7 @@ app.get(`/${SERVER_ID}/messages/:chatId`, async (c) => {
     }
     
     // Check if it's news
-    if (chatId === 'news') {
+    if (chatId === 'news' || chatId === 'news-channel') {
       const news = await kv.get('news') || [];
       return c.json({ messages: news });
     }
