@@ -44,6 +44,7 @@ interface User {
   tag?: string;
   tagColor?: string;
   verified?: boolean;
+  emailVerified?: boolean;
   passwordCompromised?: boolean;
   moderator?: boolean;
 }
@@ -303,6 +304,40 @@ export default function AdminPanel() {
     }
   };
 
+  const handleToggleEmailVerified = async (user: User) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}/verify-email`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": userId || "",
+          },
+          body: JSON.stringify({ emailVerified: !user.emailVerified }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to update email verification status");
+        return;
+      }
+
+      toast.success(
+        user.emailVerified
+          ? `Email unverified for ${user.name}`
+          : `Email verified for ${user.name}`
+      );
+      setUserMenuOpen(false);
+      loadAllUsers();
+    } catch (error) {
+      console.error("Toggle email verified error:", error);
+      toast.error("Failed to update email verification status");
+    }
+  };
+
   const handleMarkAsScam = async (user: User) => {
     if (!confirm(`Mark ${user.name} as SCAM? This will set their tag to SCAM with a red background.`)) {
       return;
@@ -380,10 +415,30 @@ export default function AdminPanel() {
     setTrollLoading(true);
     try {
       // Broadcast via Supabase Realtime
-      const trollChannel = supabase.channel('troll-zone-global');
-      await trollChannel.subscribe();
+      console.log('[Troll Admin] Creating channel for broadcast');
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: {
+          broadcast: {
+            self: true,
+          },
+        },
+      });
       
-      await trollChannel.send({
+      // Wait for subscription to be ready
+      await new Promise<void>((resolve, reject) => {
+        trollChannel
+          .subscribe((status: string) => {
+            console.log('[Troll Admin] Subscription status:', status);
+            if (status === 'SUBSCRIBED') {
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(new Error(`Subscription failed with status: ${status}`));
+            }
+          });
+      });
+      
+      console.log('[Troll Admin] Sending broadcast message:', globalMessage);
+      const result = await trollChannel.send({
         type: 'broadcast',
         event: 'troll-action',
         payload: {
@@ -392,6 +447,7 @@ export default function AdminPanel() {
           timestamp: Date.now()
         }
       });
+      console.log('[Troll Admin] Broadcast send result:', result);
 
       toast.success(`✉️ Global message broadcasted to all users!`);
       setGlobalMessage("");
@@ -399,7 +455,7 @@ export default function AdminPanel() {
       // Unsubscribe after sending
       await supabase.removeChannel(trollChannel);
     } catch (error) {
-      console.error("Send global message error:", error);
+      console.error("[Troll Admin] Send global message error:", error);
       toast.error("Failed to send message");
     } finally {
       setTrollLoading(false);
@@ -409,10 +465,30 @@ export default function AdminPanel() {
   const handleScreenShake = async () => {
     try {
       // Broadcast via Supabase Realtime
-      const trollChannel = supabase.channel('troll-zone-global');
-      await trollChannel.subscribe();
+      console.log('[Troll Admin] Creating channel for shake');
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: {
+          broadcast: {
+            self: true,
+          },
+        },
+      });
       
-      await trollChannel.send({
+      // Wait for subscription to be ready
+      await new Promise<void>((resolve, reject) => {
+        trollChannel
+          .subscribe((status: string) => {
+            console.log('[Troll Admin] Shake subscription status:', status);
+            if (status === 'SUBSCRIBED') {
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(new Error(`Subscription failed with status: ${status}`));
+            }
+          });
+      });
+      
+      console.log('[Troll Admin] Sending shake action');
+      const result = await trollChannel.send({
         type: 'broadcast',
         event: 'troll-action',
         payload: {
@@ -420,13 +496,14 @@ export default function AdminPanel() {
           timestamp: Date.now()
         }
       });
+      console.log('[Troll Admin] Shake send result:', result);
       
       toast.success("🔨 Screen shake activated for all users!");
       
       // Unsubscribe after sending
       await supabase.removeChannel(trollChannel);
     } catch (error) {
-      console.error("Screen shake error:", error);
+      console.error("[Troll Admin] Screen shake error:", error);
       toast.error("Failed to activate screen shake");
     }
   };
@@ -434,10 +511,30 @@ export default function AdminPanel() {
   const handleConfetti = async () => {
     try {
       // Broadcast via Supabase Realtime
-      const trollChannel = supabase.channel('troll-zone-global');
-      await trollChannel.subscribe();
+      console.log('[Troll Admin] Creating channel for confetti');
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: {
+          broadcast: {
+            self: true,
+          },
+        },
+      });
       
-      await trollChannel.send({
+      // Wait for subscription to be ready
+      await new Promise<void>((resolve, reject) => {
+        trollChannel
+          .subscribe((status: string) => {
+            console.log('[Troll Admin] Confetti subscription status:', status);
+            if (status === 'SUBSCRIBED') {
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(new Error(`Subscription failed with status: ${status}`));
+            }
+          });
+      });
+      
+      console.log('[Troll Admin] Sending confetti action');
+      const result = await trollChannel.send({
         type: 'broadcast',
         event: 'troll-action',
         payload: {
@@ -445,13 +542,14 @@ export default function AdminPanel() {
           timestamp: Date.now()
         }
       });
+      console.log('[Troll Admin] Confetti send result:', result);
       
       toast.success("🎉 Confetti explosion triggered for all users!");
       
       // Unsubscribe after sending
       await supabase.removeChannel(trollChannel);
     } catch (error) {
-      console.error("Confetti error:", error);
+      console.error("[Troll Admin] Confetti error:", error);
       toast.error("Failed to trigger confetti");
     }
   };
@@ -459,10 +557,30 @@ export default function AdminPanel() {
   const handleFakeUpdate = async () => {
     try {
       // Broadcast via Supabase Realtime
-      const trollChannel = supabase.channel('troll-zone-global');
-      await trollChannel.subscribe();
+      console.log('[Troll Admin] Creating channel for fake update');
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: {
+          broadcast: {
+            self: true,
+          },
+        },
+      });
       
-      await trollChannel.send({
+      // Wait for subscription to be ready
+      await new Promise<void>((resolve, reject) => {
+        trollChannel
+          .subscribe((status: string) => {
+            console.log('[Troll Admin] Update subscription status:', status);
+            if (status === 'SUBSCRIBED') {
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(new Error(`Subscription failed with status: ${status}`));
+            }
+          });
+      });
+      
+      console.log('[Troll Admin] Sending fake update action');
+      const result = await trollChannel.send({
         type: 'broadcast',
         event: 'troll-action',
         payload: {
@@ -470,13 +588,14 @@ export default function AdminPanel() {
           timestamp: Date.now()
         }
       });
+      console.log('[Troll Admin] Update send result:', result);
       
       toast.success("⚠️ Fake update alert sent to all users!");
       
       // Unsubscribe after sending
       await supabase.removeChannel(trollChannel);
     } catch (error) {
-      console.error("Fake update error:", error);
+      console.error("[Troll Admin] Fake update error:", error);
       toast.error("Failed to send update alert");
     }
   };
@@ -484,10 +603,30 @@ export default function AdminPanel() {
   const handleEmojiRain = async () => {
     try {
       // Broadcast via Supabase Realtime
-      const trollChannel = supabase.channel('troll-zone-global');
-      await trollChannel.subscribe();
+      console.log('[Troll Admin] Creating channel for emoji rain');
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: {
+          broadcast: {
+            self: true,
+          },
+        },
+      });
       
-      await trollChannel.send({
+      // Wait for subscription to be ready
+      await new Promise<void>((resolve, reject) => {
+        trollChannel
+          .subscribe((status: string) => {
+            console.log('[Troll Admin] Emoji rain subscription status:', status);
+            if (status === 'SUBSCRIBED') {
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(new Error(`Subscription failed with status: ${status}`));
+            }
+          });
+      });
+      
+      console.log('[Troll Admin] Sending emoji rain action');
+      const result = await trollChannel.send({
         type: 'broadcast',
         event: 'troll-action',
         payload: {
@@ -495,13 +634,14 @@ export default function AdminPanel() {
           timestamp: Date.now()
         }
       });
+      console.log('[Troll Admin] Emoji rain send result:', result);
       
       toast.success("🌧️ Emoji rain activated for all users!");
       
       // Unsubscribe after sending
       await supabase.removeChannel(trollChannel);
     } catch (error) {
-      console.error("Emoji rain error:", error);
+      console.error("[Troll Admin] Emoji rain error:", error);
       toast.error("Failed to activate emoji rain");
     }
   };
@@ -917,6 +1057,15 @@ export default function AdminPanel() {
               >
                 <CheckCircle className="size-4 mr-2" />
                 {selectedUser.verified ? "Unverify User" : "Verify User"}
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full justify-start border-gray-700 hover:bg-gray-800"
+                onClick={() => handleToggleEmailVerified(selectedUser)}
+              >
+                <CheckCircle className="size-4 mr-2" />
+                {selectedUser.emailVerified ? "Unverify Email" : "Verify Email"}
               </Button>
 
               <Button

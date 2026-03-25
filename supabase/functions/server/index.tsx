@@ -1558,6 +1558,39 @@ app.post("/make-server-a1c86d03/admin/users/:userId/verify", async (c) => {
   }
 });
 
+// Admin: Verify/unverify user email
+app.post("/make-server-a1c86d03/admin/users/:userId/verify-email", async (c) => {
+  try {
+    const adminUserId = getUserIdFromRequest(c);
+    
+    if (!adminUserId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    // Check if user is admin
+    if (!(await isAdmin(adminUserId))) {
+      return c.json({ error: 'Unauthorized - Admin only' }, 403);
+    }
+
+    const targetUserId = c.req.param('userId');
+    const { emailVerified } = await c.req.json();
+
+    // Get user and set email verified status
+    const user = await kv.get(`user:${targetUserId}`);
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    user.emailVerified = emailVerified;
+    await kv.set(`user:${targetUserId}`, user);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Verify email error:', error);
+    return c.json({ error: 'Failed to verify email' }, 500);
+  }
+});
+
 // Admin: Set moderator status
 app.post("/make-server-a1c86d03/admin/users/:userId/moderator", async (c) => {
   try {

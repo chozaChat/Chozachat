@@ -169,6 +169,9 @@ export default function ChatMain() {
   const [selectedUserForMod, setSelectedUserForMod] = useState<User | null>(null);
   const [friendEmail, setFriendEmail] = useState("");
   const [addFriendOpen, setAddFriendOpen] = useState(false);
+  const [trollChannelConnected, setTrollChannelConnected] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
 
   // Refs for Realtime channels
   const messageChannelRef = useRef<any>(null);
@@ -386,6 +389,14 @@ export default function ChatMain() {
     loadFriendRequests();
     loadStats();
     updateLastActive();
+    
+    // Check notification permission on mount
+    if ("Notification" in window) {
+      setNotificationPermission(Notification.permission);
+      if (Notification.permission === "granted") {
+        setNotificationsEnabled(true);
+      }
+    }
 
     // Set up Supabase Realtime for messages
     if (selectedChat) {
@@ -401,6 +412,16 @@ export default function ChatMain() {
       messageChannelRef.current
         .on('broadcast', { event: 'new-message' }, (payload: any) => {
           console.log('Received new message:', payload);
+          // Show notification if not from current user
+          if (payload && payload.payload) {
+            const messageData = payload.payload;
+            if (messageData.senderId !== userId) {
+              // Get sender info
+              const sender = friends.find(f => f.id === messageData.senderId) || 
+                            { name: 'Someone', emoji: '👤' };
+              showMessageNotification(sender.name, messageData.text, sender.emoji);
+            }
+          }
           // Reload messages when a new message is broadcast
           loadMessages(selectedChat.type, selectedChat.id);
         })
@@ -429,11 +450,20 @@ export default function ChatMain() {
   useEffect(() => {
     if (!userId) return;
 
-    trollChannelRef.current = supabase.channel('troll-zone-global');
+    console.log('[Troll] Setting up troll channel listener for user:', userId);
+    
+    // Create a unique channel instance for this user with self: true to receive own messages
+    trollChannelRef.current = supabase.channel('troll-zone-global', {
+      config: {
+        broadcast: {
+          self: true, // Allow receiving own broadcasts (for testing)
+        },
+      },
+    });
     
     trollChannelRef.current
       .on('broadcast', { event: 'troll-action' }, (payload: any) => {
-        console.log('Received troll action:', payload);
+        console.log('[Troll] Received troll action:', payload);
         const command = payload.payload;
         
         // Execute command based on type
@@ -533,11 +563,20 @@ export default function ChatMain() {
         }
       })
       .subscribe((status: string) => {
-        console.log('Troll channel status:', status);
+        console.log('[Troll] Channel subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('[Troll] Successfully subscribed to troll channel');
+          setTrollChannelConnected(true);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.error('[Troll] Channel connection failed or closed:', status);
+          setTrollChannelConnected(false);
+        }
       });
 
     return () => {
       if (trollChannelRef.current) {
+        console.log('[Troll] Cleaning up troll channel');
+        setTrollChannelConnected(false);
         supabase.removeChannel(trollChannelRef.current);
         trollChannelRef.current = null;
       }
@@ -574,6 +613,11 @@ export default function ChatMain() {
             }
           );
           setCurrentUser(verifiedUser);
+        }
+        
+        // Load all users if user is admin or moderator
+        if (data.user.email === 'mikhail02323@gmail.com' || data.user.moderator) {
+          loadAllUsers();
         }
       }
     } catch (error) {
@@ -838,6 +882,77 @@ export default function ChatMain() {
       // Silently fail - this is not critical
       console.log("Failed to update last active:", error);
     }
+  };
+
+  const loadAllUsers = async () => {
+    if (!userId) return;
+    
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Failed to load all users:", response.status, response.statusText, errorText);
+        return;
+      }
+
+      const data = await response.json();
+      console.log("Loaded users:", data.users?.length || 0);
+      if (data.users) {
+        setAllUsers(data.users);
+      }
+    } catch (error) {
+      console.error("Load all users error:", error);
+    }
+  };
+
+  // Request notification permission
+  const requestNotificationPermission = async () => {
+    if (!("Notification" in window)) {
+      toast.error("This browser does not support notifications");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    
+    if (permission === "granted") {
+      setNotificationsEnabled(true);
+      toast.success("Notifications enabled!");
+    } else if (permission === "denied") {
+      toast.error("Notification permission denied");
+    }
+  };
+
+  // Show notification for new message
+  const showMessageNotification = (senderName: string, message: string, senderEmoji?: string) => {
+    if (!notificationsEnabled || notificationPermission !== "granted") return;
+    
+    // Don't show notification if user is viewing the chat
+    if (document.hasFocus()) return;
+
+    const notification = new Notification(`${senderEmoji || ""} ${senderName}`, {
+      body: message,
+      icon: "/favicon.ico",
+      tag: "chat-message",
+      requireInteraction: false,
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+
+    // Auto-close after 5 seconds
+    setTimeout(() => notification.close(), 5000);
   };
 
   const handleAddFriend = async (e: React.FormEvent) => {
@@ -1744,6 +1859,39 @@ export default function ChatMain() {
                               ))}
                             </div>
                           </ScrollArea>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Notifications Settings */}
+                    <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                      <Label>Notifications</Label>
+                      <div className="mt-2 space-y-2">
+                        <div className="flex items-center justify-between p-3 border rounded-lg dark:border-gray-700">
+                          <div className="flex items-center gap-2">
+                            <Bell className="size-4 text-gray-500" />
+                            <span className="text-sm">Browser Notifications</span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={notificationsEnabled ? "default" : "outline"}
+                            onClick={() => {
+                              if (!notificationsEnabled) {
+                                requestNotificationPermission();
+                              } else {
+                                setNotificationsEnabled(false);
+                                toast.info("Notifications disabled");
+                              }
+                            }}
+                          >
+                            {notificationsEnabled ? "Enabled" : "Enable"}
+                          </Button>
+                        </div>
+                        {notificationPermission === "denied" && (
+                          <p className="text-xs text-red-500">
+                            Notifications are blocked. Please enable them in your browser settings.
+                          </p>
                         )}
                       </div>
                     </div>
@@ -2822,9 +2970,17 @@ export default function ChatMain() {
             {/* Troll Zone Tab */}
             <TabsContent value="troll">
               <div className="space-y-3">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Fun global functions that affect all active users! 🎉
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Fun global functions that affect all active users! 🎉
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${trollChannelConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {trollChannelConnected ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                </div>
                 
                 <Button
                   className="w-full"
@@ -2833,17 +2989,20 @@ export default function ChatMain() {
                     if (message) {
                       try {
                         if (trollChannelRef.current) {
-                          await trollChannelRef.current.send({
+                          console.log('[Troll] Sending broadcast:', message);
+                          const result = await trollChannelRef.current.send({
                             type: 'broadcast',
                             event: 'troll-action',
                             payload: { action: 'broadcast', message }
                           });
+                          console.log('[Troll] Broadcast send result:', result);
                           toast.success("Broadcast sent to all users!");
                         } else {
+                          console.error('[Troll] Channel not ready');
                           toast.error("Troll channel not ready");
                         }
                       } catch (error) {
-                        console.error("Broadcast error:", error);
+                        console.error("[Troll] Broadcast error:", error);
                         toast.error("Failed to send broadcast");
                       }
                     }
@@ -2858,17 +3017,20 @@ export default function ChatMain() {
                   onClick={async () => {
                     try {
                       if (trollChannelRef.current) {
-                        await trollChannelRef.current.send({
+                        console.log('[Troll] Sending shake action');
+                        const result = await trollChannelRef.current.send({
                           type: 'broadcast',
                           event: 'troll-action',
                           payload: { action: 'shake' }
                         });
+                        console.log('[Troll] Shake send result:', result);
                         toast.success("Screen shake activated for all users!");
                       } else {
+                        console.error('[Troll] Channel not ready');
                         toast.error("Troll channel not ready");
                       }
                     } catch (error) {
-                      console.error("Shake error:", error);
+                      console.error("[Troll] Shake error:", error);
                       toast.error("Failed to activate shake");
                     }
                   }}
@@ -2882,17 +3044,20 @@ export default function ChatMain() {
                   onClick={async () => {
                     try {
                       if (trollChannelRef.current) {
-                        await trollChannelRef.current.send({
+                        console.log('[Troll] Sending confetti action');
+                        const result = await trollChannelRef.current.send({
                           type: 'broadcast',
                           event: 'troll-action',
                           payload: { action: 'confetti' }
                         });
+                        console.log('[Troll] Confetti send result:', result);
                         toast.success("Confetti explosion activated!");
                       } else {
+                        console.error('[Troll] Channel not ready');
                         toast.error("Troll channel not ready");
                       }
                     } catch (error) {
-                      console.error("Confetti error:", error);
+                      console.error("[Troll] Confetti error:", error);
                       toast.error("Failed to activate confetti");
                     }
                   }}
@@ -2906,17 +3071,20 @@ export default function ChatMain() {
                   onClick={async () => {
                     try {
                       if (trollChannelRef.current) {
-                        await trollChannelRef.current.send({
+                        console.log('[Troll] Sending fake update action');
+                        const result = await trollChannelRef.current.send({
                           type: 'broadcast',
                           event: 'troll-action',
                           payload: { action: 'update' }
                         });
+                        console.log('[Troll] Update send result:', result);
                         toast.success("Fake update alert sent!");
                       } else {
+                        console.error('[Troll] Channel not ready');
                         toast.error("Troll channel not ready");
                       }
                     } catch (error) {
-                      console.error("Fake update error:", error);
+                      console.error("[Troll] Fake update error:", error);
                       toast.error("Failed to send fake update");
                     }
                   }}
@@ -2930,17 +3098,20 @@ export default function ChatMain() {
                   onClick={async () => {
                     try {
                       if (trollChannelRef.current) {
-                        await trollChannelRef.current.send({
+                        console.log('[Troll] Sending emoji rain action');
+                        const result = await trollChannelRef.current.send({
                           type: 'broadcast',
                           event: 'troll-action',
                           payload: { action: 'emojiRain' }
                         });
+                        console.log('[Troll] Emoji rain send result:', result);
                         toast.success("Emoji rain activated!");
                       } else {
+                        console.error('[Troll] Channel not ready');
                         toast.error("Troll channel not ready");
                       }
                     } catch (error) {
-                      console.error("Emoji rain error:", error);
+                      console.error("[Troll] Emoji rain error:", error);
                       toast.error("Failed to activate emoji rain");
                     }
                   }}
@@ -2973,7 +3144,7 @@ export default function ChatMain() {
                   const query = e.target.value;
                   setModeratorSearchQuery(query);
                   
-                  if (query.trim().length >= 2) {
+                  if (query.trim().length >= 1) {
                     // Search in allUsers
                     const results = allUsers.filter(u => 
                       u.name?.toLowerCase().includes(query.toLowerCase()) ||
@@ -2987,40 +3158,80 @@ export default function ChatMain() {
               />
             </div>
             
-            {/* Search Results */}
-            {moderatorSearchResults.length > 0 && (
-              <ScrollArea className="max-h-64 border rounded-lg p-2">
-                <div className="space-y-2">
-                  {moderatorSearchResults.map((user) => (
-                    <div
-                      key={user.id}
-                      className="p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
-                      onClick={() => {
-                        setSelectedUserForMod(user);
-                        setModeratorSearchQuery("");
-                        setModeratorSearchResults([]);
-                      }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarFallback className="bg-blue-600 text-white">
-                            {user.emoji ? (
-                              <span className="text-2xl">{user.emoji}</span>
-                            ) : (
-                              user.name.charAt(0).toUpperCase()
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1">
-                          <div className="font-medium">{user.name}</div>
-                          <div className="text-xs text-gray-500">@{user.username}</div>
+            {/* User List - Show search results OR all users */}
+            <ScrollArea className="max-h-96 border rounded-lg p-2">
+              <div className="space-y-2">
+                {moderatorSearchQuery ? (
+                  // Show search results
+                  moderatorSearchResults.length > 0 ? (
+                    moderatorSearchResults.map((user) => (
+                      <div
+                        key={user.id}
+                        className="p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                        onClick={() => {
+                          setSelectedUserForMod(user);
+                          setModeratorSearchQuery("");
+                          setModeratorSearchResults([]);
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar>
+                            <AvatarFallback className="bg-blue-600 text-white">
+                              {user.emoji ? (
+                                <span className="text-2xl">{user.emoji}</span>
+                              ) : (
+                                user.name.charAt(0).toUpperCase()
+                              )}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1">
+                            <div className="font-medium">{user.name}</div>
+                            <div className="text-xs text-gray-500">@{user.username}</div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
+                    ))
+                  ) : (
+                    <div className="text-center text-gray-500 py-4">No users found</div>
+                  )
+                ) : (
+                  // Show all users by default
+                  allUsers.length > 0 ? (
+                    allUsers.map((user) => (
+                      <div
+                        key={user.id}
+                        className="p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                        onClick={() => {
+                          setSelectedUserForMod(user);
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar>
+                            <AvatarFallback className="bg-blue-600 text-white">
+                              {user.emoji ? (
+                                <span className="text-2xl">{user.emoji}</span>
+                              ) : (
+                                user.name.charAt(0).toUpperCase()
+                              )}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1">
+                            <div className="font-medium flex items-center gap-2">
+                              {user.name}
+                              {user.verified && renderVerifiedBadge()}
+                              {renderTagBadge(user.tag, user.email === 'mikhail02323@gmail.com', user.tagColor)}
+                            </div>
+                            <div className="text-xs text-gray-500">@{user.username}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-gray-500 py-4">No users available</div>
+                  )
+                )}
+              </div>
+            </ScrollArea>
             
             {/* Selected User Actions */}
             {selectedUserForMod && (
@@ -3061,6 +3272,49 @@ export default function ChatMain() {
                   }}
                 >
                   Change Password
+                </Button>
+                
+                <Button
+                  size="sm"
+                  variant={selectedUserForMod.verified ? "default" : "outline"}
+                  className="w-full"
+                  onClick={async () => {
+                    try {
+                      const response = await fetch(
+                        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/verify`,
+                        {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${publicAnonKey}`,
+                            'X-User-Id': userId || '',
+                          },
+                          body: JSON.stringify({ verified: !selectedUserForMod.verified }),
+                        }
+                      );
+                      const data = await response.json();
+                      if (!response.ok) {
+                        toast.error(data.error || "Failed to update verification status");
+                        return;
+                      }
+                      toast.success(
+                        selectedUserForMod.verified
+                          ? `${selectedUserForMod.name} unverified!`
+                          : `${selectedUserForMod.name} verified!`
+                      );
+                      // Update local state
+                      setSelectedUserForMod({
+                        ...selectedUserForMod,
+                        verified: !selectedUserForMod.verified
+                      });
+                      loadAllUsers(); // Refresh the list
+                    } catch (error) {
+                      console.error("Verify user error:", error);
+                      toast.error("Failed to update verification status");
+                    }
+                  }}
+                >
+                  {selectedUserForMod.verified ? "✓ Verified - Click to Unverify" : "Verify Email"}
                 </Button>
                 
                 <Button
