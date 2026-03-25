@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Shield, Users, Settings, LogOut, Trash2, Key, AlertTriangle, CheckCircle, MoreVertical, MessageSquare } from "lucide-react";
+import { Shield, Users, Settings, LogOut, Trash2, Key, AlertTriangle, CheckCircle, MoreVertical, MessageSquare, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -47,6 +47,21 @@ interface User {
   emailVerified?: boolean;
   passwordCompromised?: boolean;
   moderator?: boolean;
+  isModerator?: boolean;
+  isScammer?: boolean;
+  tags?: string[];
+}
+
+interface Channel {
+  id: string;
+  name: string;
+  username?: string;
+  emoji?: string;
+  type?: string;
+  verified?: boolean;
+  members?: string[];
+  createdBy?: string;
+  createdAt?: string;
 }
 
 export default function AdminPanel() {
@@ -55,8 +70,11 @@ export default function AdminPanel() {
   const [userId, setUserId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [allChannels, setAllChannels] = useState<Channel[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [channelMenuOpen, setChannelMenuOpen] = useState(false);
   const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
@@ -115,6 +133,7 @@ export default function AdminPanel() {
         }
         
         loadAllUsers(id);
+        loadAllChannels(id);
       } else {
         navigate("/");
       }
@@ -161,6 +180,44 @@ export default function AdminPanel() {
       }
     } catch (error) {
       console.error("Load all users error:", error);
+    }
+  };
+
+  const loadAllChannels = async (userIdToUse?: string) => {
+    const idToUse = userIdToUse || userId;
+    if (!idToUse) {
+      console.error("No user ID available to load channels");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": idToUse,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // Silently return if not authorized (expected for non-admin users)
+        if (response.status === 403) {
+          return;
+        }
+        const errorText = await response.text();
+        console.error("Failed to load all channels:", response.status, response.statusText, errorText);
+        return;
+      }
+
+      const data = await response.json();
+      console.log("Loaded channels:", data.channels?.length || 0);
+      if (data.channels) {
+        setAllChannels(data.channels);
+      }
+    } catch (error) {
+      console.error("Load all channels error:", error);
     }
   };
 
@@ -407,6 +464,40 @@ export default function AdminPanel() {
     } catch (error) {
       console.error("Toggle moderator error:", error);
       toast.error("Failed to update moderator status");
+    }
+  };
+
+  const handleToggleChannelVerified = async (channel: Channel) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${channel.id}/verify`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": userId || "",
+          },
+          body: JSON.stringify({ verified: !channel.verified }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to update channel verification");
+        return;
+      }
+
+      toast.success(
+        channel.verified
+          ? `${channel.name} unverified`
+          : `${channel.name} verified ✓`
+      );
+      setChannelMenuOpen(false);
+      loadAllChannels();
+    } catch (error) {
+      console.error("Toggle channel verified error:", error);
+      toast.error("Failed to update channel verification");
     }
   };
 

@@ -1325,6 +1325,60 @@ app.post(`/${SERVER_ID}/admin/news`, async (c) => {
   }
 });
 
+// Admin: Get all channels
+app.get(`/${SERVER_ID}/admin/channels`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    const allGroups = await kv.getByPrefix('group:');
+    
+    return c.json({ channels: allGroups });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get channels' }, 500);
+  }
+});
+
+// Admin: Verify channel
+app.post(`/${SERVER_ID}/admin/channels/:id/verify`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    const channelId = c.req.param('id');
+    const body = await c.req.json();
+    const { verified } = body;
+
+    const channel = await kv.get(`group:${channelId}`);
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    channel.verified = verified;
+    await kv.set(`group:${channelId}`, channel);
+
+    return c.json({ channel });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to verify channel' }, 500);
+  }
+});
+
 // Troll: Global broadcast
 app.post(`/${SERVER_ID}/admin/troll/broadcast`, async (c) => {
   try {

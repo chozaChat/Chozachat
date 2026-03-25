@@ -632,7 +632,7 @@ export default function ChatMain() {
         }
       }
     } catch (error) {
-      console.error("Failed to load user:", error);
+      console.error("Failed to connect to CFS, failed to load user: ConnectEID", error);
     }
   };
 
@@ -659,7 +659,7 @@ export default function ChatMain() {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Failed to load friends:", response.status);
+        console.error("Failed to connect to CFS, failed to load friends: ConnectEID ", response.status);
         console.error("Error details:", errorText);
         try {
           const errorJson = JSON.parse(errorText);
@@ -676,7 +676,7 @@ export default function ChatMain() {
         setFriends(data.friends);
       }
     } catch (error) {
-      console.error("Failed to load friends:", error);
+      console.error("Failed to connect to CFS, failed to load friends: ConnectEID ", error);
     }
   };
 
@@ -698,7 +698,7 @@ export default function ChatMain() {
       );
       
       if (!response.ok) {
-        console.error("Failed to load channels:", response.status);
+        console.error("Failed to connect to CFS, failed to load channels: ConnectEID ", response.status);
         return;
       }
       
@@ -707,7 +707,7 @@ export default function ChatMain() {
         setChannels(data.channels);
       }
     } catch (error) {
-      console.error("Failed to load channels:", error);
+      console.error("Failed to connect to CFS, failed to load channels: ConnectEID ", error);
     }
   };
 
@@ -731,7 +731,7 @@ export default function ChatMain() {
         );
         
         if (!response.ok) {
-          console.error("Failed to load news:", response.status);
+          console.error("Failed to connect to CFS, failed to load news: ConnectEID", response.status);
           return;
         }
         
@@ -755,7 +755,7 @@ export default function ChatMain() {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Failed to load messages:", response.status, errorText);
+        console.error("Failed to connect to Chozachat Framework Serives: ConnectEID", response.status, errorText);
         return;
       }
       
@@ -766,7 +766,7 @@ export default function ChatMain() {
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
       }
     } catch (error) {
-      console.error("Failed to load messages:", error);
+      console.error("Failed to connect to Chozachat Framework Serives: ConnectEID", error);
     }
   };
 
@@ -800,8 +800,8 @@ export default function ChatMain() {
       
       if (!response.ok) {
         const errorData = await response.json();
-        console.error("Failed to load friend requests:", response.status, errorData);
-        toast.error(`Failed to load friend requests: ${errorData.message || errorData.error || 'Unknown error'}`);
+        console.error("Failed to connect to CFS, failed to load friend requests: CEID", response.status, errorData);
+        toast.error(`Failed to connect to CFS, failed to load friend requests: CEID ${errorData.message || errorData.error || 'No error description / unknown'}`);
         return;
       }
       
@@ -811,7 +811,7 @@ export default function ChatMain() {
       }
     } catch (error) {
       console.error("Failed to load friend requests:", error);
-      toast.error(`Failed to load friend requests: ${error}`);
+      toast.error(`Failed to connect to CFS, failed to load friend requests: CEID ${error}`);
     }
   };
 
@@ -914,7 +914,7 @@ export default function ChatMain() {
       setNotificationsEnabled(true);
       toast.success("Notifications enabled!");
     } else if (permission === "denied") {
-      toast.error("Notification permission denied");
+      toast.error("Notification permission denied. Please try again.");
     }
   };
 
@@ -1220,9 +1220,12 @@ export default function ChatMain() {
 
       const data = await response.json();
       if (response.ok) {
-        setSearchResults(data.results || []);
+        // Backend returns { users, channels }
+        const results = [...(data.users || []), ...(data.channels || [])];
+        setSearchResults(results);
       } else {
-        toast.error("Failed to search");
+        console.error("Search failed:", data);
+        toast.error(data.error || "Failed to search");
       }
     } catch (error) {
       console.error("Search error:", error);
