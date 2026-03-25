@@ -73,6 +73,11 @@ interface User {
   tagColor?: string;
   verified?: boolean;
   moderator?: boolean;
+  isModerator?: boolean;
+  isScammer?: boolean;
+  passwordCompromised?: boolean;
+  lastActive?: string;
+  tags?: string[];
   emoji?: string;
 }
 
@@ -106,9 +111,10 @@ interface Channel {
 
 interface Message {
   id: string;
-  chatId: string;
+  chatId?: string;
   senderId: string;
-  text: string;
+  text?: string;
+  content?: string;
   timestamp: string;
 }
 
@@ -621,7 +627,7 @@ export default function ChatMain() {
         }
         
         // Load all users if user is admin or moderator
-        if (data.user.email === 'mikhail02323@gmail.com' || data.user.moderator) {
+        if (data.user.email === 'mikhail02323@gmail.com' || data.user.moderator || data.user.isModerator) {
           loadAllUsers();
         }
       }
@@ -1299,7 +1305,7 @@ export default function ChatMain() {
               Authorization: `Bearer ${publicAnonKey}`,
               'X-User-Id': userId || '',
             },
-            body: JSON.stringify({ text: messageText }),
+            body: JSON.stringify({ content: messageText }),
           }
         );
 
@@ -1336,7 +1342,7 @@ export default function ChatMain() {
           },
           body: JSON.stringify({
             chatId: selectedChat.id,
-            text: messageText,
+            content: messageText,
             chatType: selectedChat.type,
           }),
         }
@@ -1748,7 +1754,7 @@ export default function ChatMain() {
                         value={editTag}
                         onChange={(e) => setEditTag(e.target.value)}
                       />
-                      {currentUser?.moderator && (
+                      {(currentUser?.moderator || currentUser?.isModerator) && (
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                           Leave empty to use default "MOD" tag
                         </p>
@@ -1759,7 +1765,7 @@ export default function ChatMain() {
                         </p>
                       )}
                     </div>
-                    {currentUser?.moderator && (
+                    {(currentUser?.moderator || currentUser?.isModerator) && (
                       <div>
                         <Label>Tag Color (Moderator)</Label>
                         <div className="flex gap-2 mt-2">
@@ -2147,7 +2153,7 @@ export default function ChatMain() {
           <Shield className="size-5 text-red-600" />
         </Button>
       )}
-      {currentUser?.moderator && (
+      {(currentUser?.moderator || currentUser?.isModerator) && (
         <Button 
           variant="ghost" 
           size="icon"
@@ -2636,7 +2642,7 @@ export default function ChatMain() {
                               : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-sm'
                           }`}
                         >
-                          <div>{message.text}</div>
+                          <div>{message.content || message.text}</div>
                         </div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3">
                           {new Date(message.timestamp).toLocaleTimeString([], { 

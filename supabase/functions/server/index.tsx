@@ -1200,7 +1200,7 @@ app.get(`/${SERVER_ID}/admin/users`, async (c) => {
     }
 
     const currentUser = await kv.get(`user:${userId}`);
-    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+    if (!currentUser || (currentUser.email !== 'mikhail02323@gmail.com' && !currentUser.isModerator)) {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
