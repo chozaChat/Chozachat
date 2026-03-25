@@ -1,234 +1,198 @@
 import { Hono } from "npm:hono@4";
 import { cors } from 'npm:hono/cors';
-import { logger } from 'npm:hono/logger';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
-// VERSION: 2024-03-19-v9 - Bypass auth temporarily using X-User-Id header
-console.log("=== SERVER STARTING - VERSION 2024-03-19-v9 ===");
+// VERSION: 2024-03-25-v17-channels-consolidation
 
+// Apply CORS middleware
 app.use('*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-User-Id'],
 }));
 
-app.use('*', logger(console.log));
-
-// Validate Supabase JWT directly - no session storage needed
-async function validateSession(accessToken: string) {
-  console.log("BYPASS AUTH - Returning hardcoded user ID from localStorage");
-  
-  // Temporary bypass: extract userId from request headers
-  // The frontend will pass userId in a custom header
-  return null; // Will be overridden per-endpoint
-}
-
 // Helper to get userId from Authorization header or fallback
 function getUserIdFromRequest(c: any): string | null {
-  // Try to get from custom header first
   const userIdHeader = c.req.header('X-User-Id');
   if (userIdHeader) {
-    console.log("Got userId from X-User-Id header:", userIdHeader);
     return userIdHeader;
   }
-  
-  console.log("No X-User-Id header found");
   return null;
 }
 
-// Retry wrapper for database operations to handle connection resets
-async function withRetry<T>(
-  operation: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 100
-): Promise<T> {
-  let lastError: any;
+async function validateSession(accessToken: string) {
+  const sessionData = await kv.get(`session:${accessToken}`);
+  if (sessionData?.userId) {
+    return sessionData.userId;
+  }
   
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  return null;
+}
+
+// Retry helper for database operations
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let attempt = 0;
+  while (true) {
     try {
-      return await operation();
+      return await fn();
     } catch (error: any) {
-      lastError = error;
+      attempt++;
       const errorMessage = error?.message || String(error);
       
-      // Check if it's a connection reset or timeout error
-      const isRetryable = 
-        errorMessage.includes('connection reset') ||
-        errorMessage.includes('connection error') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('ECONNRESET') ||
-        errorMessage.includes('TLS close_notify') ||
-        errorMessage.includes('peer closed connection') ||
-        errorMessage.includes('os error 104');
+      const isRetryable = errorMessage.includes('Connection reset') || 
+                          errorMessage.includes('ECONNRESET') ||
+                          errorMessage.includes('network');
       
       if (isRetryable && attempt < maxRetries) {
-        console.log(`Retry attempt ${attempt}/${maxRetries} after error:`, errorMessage);
-        // Exponential backoff
-        await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        const delay = Math.pow(2, attempt) * 100;
+        await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
       
-      // If not retryable or max retries reached, throw
       throw error;
     }
   }
-  
-  throw lastError;
 }
 
 // Health check endpoint
 app.get("/make-server-a1c86d03/health", (c) => {
-  return c.json({ status: "ok", version: "2024-03-19-v9", timestamp: new Date().toISOString() });
+  return c.json({ status: "ok", version: "2024-03-25-v17-channels-consolidation", timestamp: new Date().toISOString() });
 });
 
-// Sign up endpoint
-app.post("/make-server-a1c86d03/signup", async (c) => {
+// Version check endpoint
+app.get("/make-server-a1c86d03/version", (c) => {
+  return c.json({ version: "2024-03-25-v17-channels-consolidation" });
+});
+
+const SERVER_ID = 'make-server-a1c86d03';
+
+// Signup endpoint
+app.post(`/${SERVER_ID}/signup`, async (c) => {
   try {
-    const { email, password, name, username } = await c.req.json();
+    const body = await c.req.json();
+    const { email, password, username, name, emoji } = body;
 
-    console.log("=== SIGNUP ENDPOINT ===");
-    console.log("Email:", email);
-    console.log("Username:", username);
-    console.log("Name:", name);
-
-    if (!email || !password || !name || !username) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
-
-    // Validate username format - only English letters, numbers, underscores, and dots
+    // Username validation regex
     const usernameRegex = /^[a-zA-Z0-9_.]+$/;
     if (!usernameRegex.test(username)) {
-      console.log("Invalid username format:", username);
       return c.json({ error: "Username can only contain English letters, numbers, underscores (_) and dots (.)" }, 400);
     }
 
-    // Check if email already exists
+    // Check if email or username already exists
     const allUsers = await kv.getByPrefix('user:');
-    console.log("Existing users count:", allUsers.length);
     
     const emailExists = allUsers.some((u: any) => u.email === email);
     if (emailExists) {
-      console.log("Email already taken:", email);
       return c.json({ error: "Email already taken" }, 400);
     }
 
-    // Check if username already exists
-    console.log("Existing usernames:", allUsers.map((u: any) => u.username).filter(Boolean));
-    
     const usernameExists = allUsers.some((u: any) => u.username === username);
-    
     if (usernameExists) {
-      console.log("Username already taken:", username);
       return c.json({ error: "Username already taken" }, 400);
     }
 
+    // Create user in Supabase Auth
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
-  // Используем ОБЫЧНЫЙ signUp, а не admin
-  const { data, error } = await supabase.auth.signUp({
-    email: email,
-    password: password,
-    options: {
-      data: { 
-        name: name, 
-        username: username 
-      }
-    }
-  });
 
+    const { data, error } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { name, username, emoji }
+    });
 
     if (error) {
-      console.error('Signup error:', error);
       return c.json({ error: error.message }, 400);
     }
 
-    console.log("Supabase user created with ID:", data.user.id);
-
-    // Store user profile with username
+    // Store user data in KV store
     const userData = {
       id: data.user.id,
       email,
-      name,
       username,
-      createdAt: new Date().toISOString()
+      name,
+      emoji: emoji || '👤',
+      createdAt: new Date().toISOString(),
+      tags: [],
+      isScammer: false,
+      isModerator: false
     };
     
-    console.log("Storing user data:", userData);
     await kv.set(`user:${data.user.id}`, userData);
-    
-    // Verify it was stored
-    const verification = await kv.get(`user:${data.user.id}`);
-    console.log("Verification - user stored:", !!verification);
-    console.log("Verification - username:", verification?.username);
 
-    console.log("=== SIGNUP SUCCESS ===");
-
-    return c.json({ 
-      success: true,
-      user: {
-        id: data.user.id,
-        email,
-        name,
-        username
-      }
-    });
-  } catch (error) {
-    console.error('Signup error:', error);
-    return c.json({ error: 'Signup failed' }, 500);
+    return c.json({ success: true, user: userData });
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Signup failed' }, 500);
   }
 });
 
-// Login endpoint to create session tokens
-app.post("/make-server-a1c86d03/login", async (c) => {
+// Login endpoint
+app.post(`/${SERVER_ID}/login`, async (c) => {
   try {
-    console.log("=== LOGIN ENDPOINT CALLED ===");
     const body = await c.req.json();
-    console.log("Request body keys:", Object.keys(body));
-    
-    const { accessToken, userId } = body;
+    const { email, password } = body;
 
-    if (!accessToken || !userId) {
-      console.error("Missing required fields - accessToken:", !!accessToken, "userId:", !!userId);
-      return c.json({ error: "Missing required fields" }, 400);
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    );
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      return c.json({ error: error.message }, 401);
     }
 
-    console.log("Login endpoint - Storing session for user:", userId);
-    console.log("Token (first 30 chars):", accessToken.substring(0, 30));
+    const userId = data.user.id;
+    const accessToken = data.session.access_token;
 
-    // Store the session token mapping
+    // Store session in KV
     const sessionData = {
       userId,
+      accessToken,
       createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     };
     
     const sessionKey = `session:${accessToken}`;
-    console.log("Storing with key:", sessionKey.substring(0, 50));
-    console.log("Session data:", sessionData);
-    
     await kv.set(sessionKey, sessionData);
-    
-    // Verify it was stored
-    console.log("Verifying storage...");
-    const verification = await kv.get(sessionKey);
-    console.log("Verification result:", !!verification, verification?.userId);
 
-    console.log("=== LOGIN ENDPOINT SUCCESS ===");
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Login session storage error:', error);
-    console.error('Error stack:', error.stack);
-    return c.json({ error: 'Failed to store session' }, 500);
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Login failed' }, 500);
   }
 });
 
-// Get user profile (with userId from header for admin panel)
-app.get("/make-server-a1c86d03/user", async (c) => {
+// Logout endpoint
+app.post(`/${SERVER_ID}/logout`, async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ success: true });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const sessionKey = `session:${token}`;
+    
+    await kv.del(sessionKey);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Logout failed' }, 500);
+  }
+});
+
+// Get current user
+app.get(`/${SERVER_ID}/user`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -243,31 +207,13 @@ app.get("/make-server-a1c86d03/user", async (c) => {
     }
 
     return c.json({ user });
-  } catch (error) {
-    console.error('Get user error:', error);
-    return c.json({ error: 'Failed to get user' }, 500);
-  }
-});
-
-// Get user profile (with userId as URL param)
-app.get("/make-server-a1c86d03/user/:userId", async (c) => {
-  try {
-    const userId = c.req.param('userId');
-    const user = await kv.get(`user:${userId}`);
-    
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    return c.json({ user });
-  } catch (error) {
-    console.error('Get user error:', error);
-    return c.json({ error: 'Failed to get user' }, 500);
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Failed to get user' }, 500);
   }
 });
 
 // Update user profile
-app.post("/make-server-a1c86d03/user/update", async (c) => {
+app.put(`/${SERVER_ID}/user`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -275,71 +221,63 @@ app.post("/make-server-a1c86d03/user/update", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const { name, username, tag, tagColor, emoji } = await c.req.json();
+    const body = await c.req.json();
+    const { name, emoji, username } = body;
 
-    if (!name || !username) {
-      return c.json({ error: 'Name and username are required' }, 400);
-    }
-
-    // Validate username format - only English letters, numbers, underscores, and dots
-    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
-    if (!usernameRegex.test(username)) {
-      return c.json({ error: 'Username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
-    }
-
-    // Check if username is already taken by another user
-    const allUsers = await kv.getByPrefix('user:');
-    const usernameExists = allUsers.some(
-      (u: any) => u.username?.toLowerCase() === username.toLowerCase() && u.id !== userId
-    );
-
-    if (usernameExists) {
-      return c.json({ error: 'Username already taken' }, 400);
-    }
-
-    // Get current user data
     const user = await kv.get(`user:${userId}`);
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    // Only allow moderators to change tag color
-    let finalTagColor = user.tagColor;
-    if (user.moderator && tagColor !== undefined) {
-      // Validate color is one of the allowed colors for moderators
-      const allowedColors = ['#eab308', '#3b82f6', '#a855f7'];
-      if (allowedColors.includes(tagColor)) {
-        finalTagColor = tagColor;
+    // If username is being changed, validate it
+    if (username && username !== user.username) {
+      const usernameRegex = /^[a-zA-Z0-9_.]+$/;
+      if (!usernameRegex.test(username)) {
+        return c.json({ error: "Username can only contain English letters, numbers, underscores (_) and dots (.)" }, 400);
+      }
+
+      // Check if new username already exists
+      const allUsers = await kv.getByPrefix('user:');
+      const usernameExists = allUsers.some((u: any) => u.username === username && u.id !== userId);
+      if (usernameExists) {
+        return c.json({ error: "Username already taken" }, 400);
       }
     }
 
-    // Handle moderator tag - if they're a mod and clear their tag, default to MOD
-    let finalTag = tag !== undefined ? tag : user.tag;
-    if (user.moderator && (!finalTag || finalTag.trim() === '')) {
-      finalTag = 'MOD';
-    }
-
-    // Update user data
     const updatedUser = {
       ...user,
-      name,
-      username,
-      tag: finalTag,
-      tagColor: finalTagColor,
-      emoji: emoji !== undefined ? emoji : user.emoji, // Allow updating emoji
+      ...(name && { name }),
+      ...(emoji && { emoji }),
+      ...(username && { username })
     };
 
     await kv.set(`user:${userId}`, updatedUser);
 
-    return c.json({ success: true, user: updatedUser });
-  } catch (error) {
-    console.error('Update user error:', error);
-    return c.json({ error: 'Failed to update user' }, 500);
+    return c.json({ user: updatedUser });
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Failed to update user' }, 500);
+  }
+});
+
+// Get all users
+app.get(`/${SERVER_ID}/users`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const allUsers = await kv.getByPrefix('user:');
+    
+    return c.json({ users: allUsers });
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Failed to get users' }, 500);
   }
 });
 
 // Update user activity
-app.post("/make-server-a1c86d03/users/activity", async (c) => {
+app.post(`/${SERVER_ID}/user/activity`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -347,114 +285,46 @@ app.post("/make-server-a1c86d03/users/activity", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Get current user data
-    const user = await kv.get(`user:${userId}`);
+    const user = await withRetry(() => kv.get(`user:${userId}`));
+    
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    // Update lastActive timestamp
-    const updatedUser = {
-      ...user,
-      lastActive: new Date().toISOString(),
-    };
-
-    await kv.set(`user:${userId}`, updatedUser);
+    user.lastActive = new Date().toISOString();
+    await withRetry(() => kv.set(`user:${userId}`, user));
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Update user activity error:', error);
-    return c.json({ error: 'Failed to update user activity' }, 500);
-  }
-});
-
-// Lookup user by username
-app.get("/make-server-a1c86d03/user/lookup", async (c) => {
-  try {
-    const username = c.req.query('username');
-    
-    console.log("=== USERNAME LOOKUP ===");
-    console.log("Looking up username:", username);
-    
-    if (!username) {
-      return c.json({ error: 'Username is required' }, 400);
-    }
-    
-    const allUsers = await kv.getByPrefix('user:');
-    console.log("Total users in database:", allUsers.length);
-    
-    const allUsernames = allUsers.map((u: any) => u.username).filter(Boolean);
-    console.log("All usernames in database:", allUsernames);
-    
-    const user = allUsers.find((u: any) => 
-      u.username && u.username.toLowerCase() === username.toLowerCase()
-    );
-    
-    console.log("User found:", !!user);
-    
-    if (!user) {
-      console.log("Username not found:", username);
-      console.log("Available usernames:", allUsernames.length > 0 ? allUsernames.join(', ') : 'No usernames in database');
-      
-      // Return helpful error message
-      if (allUsernames.length === 0) {
-        return c.json({ 
-          error: 'User not found', 
-          hint: 'No users with usernames exist yet. Please sign up first.' 
-        }, 404);
-      } else {
-        return c.json({ 
-          error: 'User not found',
-          hint: `Username "${username}" not found. Check your spelling or sign up.`
-        }, 404);
-      }
-    }
-
-    console.log("Username found! Email:", user.email);
-    // Return only email for login purposes (don't expose full user data)
-    return c.json({ email: user.email });
-  } catch (error) {
-    console.error('Lookup user error:', error);
-    return c.json({ error: 'Failed to lookup user' }, 500);
+  } catch (error: any) {
+    return c.json({ error: error.message || 'Failed to update activity' }, 500);
   }
 });
 
 // Send friend request
-app.post("/make-server-a1c86d03/friends/request", async (c) => {
+app.post(`/${SERVER_ID}/friends/request`, async (c) => {
   try {
-    console.log("Friend request - Starting");
     const userId = getUserIdFromRequest(c);
-    console.log("Friend request - UserId from header:", userId);
     
     if (!userId) {
-      console.error("Friend request - No user ID provided");
-      return c.json({ code: 401, message: 'No user ID provided' }, 401);
+      return c.json({ error: 'No user ID provided' }, 401);
     }
 
     const body = await c.req.json();
-    console.log("Friend request - Request body:", body);
     const { friendEmail } = body;
 
-    // Find friend by username
     const allUsers = await kv.getByPrefix('user:');
-    console.log("Friend request - Total users found:", allUsers.length);
     const friend = allUsers.find((u: any) => u.username === friendEmail);
-    console.log("Friend request - Friend found:", !!friend, friend?.username);
 
     if (!friend) {
-      console.error("Friend request - User not found:", friendEmail);
       return c.json({ error: 'User not found' }, 404);
     }
 
     if (friend.id === userId) {
-      console.error("Friend request - Cannot add yourself");
       return c.json({ error: 'Cannot add yourself as a friend' }, 400);
     }
 
-    // Check if already friends or request exists
     const existingFriendship = await kv.get(`friendship:${userId}:${friend.id}`) || 
                                await kv.get(`friendship:${friend.id}:${userId}`);
-    console.log("Friend request - Existing friendship:", !!existingFriendship, existingFriendship?.status);
     
     if (existingFriendship) {
       if (existingFriendship.status === 'accepted') {
@@ -464,7 +334,6 @@ app.post("/make-server-a1c86d03/friends/request", async (c) => {
       }
     }
 
-    // Create friend request (pending status)
     const friendshipId = `friendship:${userId}:${friend.id}`;
     const friendshipData = {
       requesterId: userId,
@@ -472,69 +341,26 @@ app.post("/make-server-a1c86d03/friends/request", async (c) => {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    console.log("Friend request - Creating friendship:", friendshipId, friendshipData);
     await kv.set(friendshipId, friendshipData);
-    console.log("Friend request - Success");
 
-    return c.json({ success: true, friend });
-  } catch (error) {
-    console.error('Friend request error:', error);
-    return c.json({ error: `Failed to send friend request: ${error.message}` }, 500);
-  }
-});
-
-// Get friends list
-app.get("/make-server-a1c86d03/friends", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ code: 401, message: 'No user ID provided' }, 401);
-    }
-
-    const friendships = await withRetry(() => kv.getByPrefix('friendship:'));
-    const friendIds: string[] = [];
-
-    // Only include accepted friendships
-    friendships.forEach((f: any) => {
-      if (f.status === 'accepted') {
-        if (f.requesterId === userId) {
-          friendIds.push(f.receiverId);
-        } else if (f.receiverId === userId) {
-          friendIds.push(f.requesterId);
-        }
-      }
-    });
-
-    const friends = await Promise.all(
-      friendIds.map(id => withRetry(() => kv.get(`user:${id}`)))
-    );
-
-    return c.json({ friends: friends.filter(Boolean) });
-  } catch (error) {
-    console.error('Get friends error:', error);
-    return c.json({ error: 'Failed to get friends' }, 500);
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to send friend request' }, 500);
   }
 });
 
 // Get pending friend requests
-app.get("/make-server-a1c86d03/friends/requests", async (c) => {
+app.get(`/${SERVER_ID}/friends/requests`, async (c) => {
   try {
-    console.log("=== Friend Requests Endpoint ===");
     const userId = getUserIdFromRequest(c);
-    console.log("UserId from X-User-Id header:", userId);
     
     if (!userId) {
-      console.error("Friend requests - No user ID provided");
-      return c.json({ code: 401, message: 'No user ID provided' }, 401);
+      return c.json({ error: 'No user ID provided' }, 401);
     }
-
-    console.log("Friend requests - User authenticated:", userId);
 
     const friendships = await withRetry(() => kv.getByPrefix('friendship:'));
     const pendingRequests: any[] = [];
 
-    // Get requests sent to this user
     for (const f of friendships) {
       if (f.status === 'pending' && f.receiverId === userId) {
         const requester = await withRetry(() => kv.get(`user:${f.requesterId}`));
@@ -547,17 +373,14 @@ app.get("/make-server-a1c86d03/friends/requests", async (c) => {
       }
     }
 
-    console.log("Friend requests - Success, found:", pendingRequests.length, "requests");
     return c.json({ requests: pendingRequests });
-  } catch (error) {
-    console.error('Get friend requests error:', error);
-    console.error('Error stack:', error.stack);
+  } catch (error: any) {
     return c.json({ error: 'Failed to get friend requests' }, 500);
   }
 });
 
 // Accept friend request
-app.post("/make-server-a1c86d03/friends/accept", async (c) => {
+app.post(`/${SERVER_ID}/friends/accept`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -565,36 +388,28 @@ app.post("/make-server-a1c86d03/friends/accept", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const { requesterId } = await c.req.json();
+    const body = await c.req.json();
+    const { requesterId } = body;
 
-    // Find the friend request
     const friendshipId = `friendship:${requesterId}:${userId}`;
     const friendship = await kv.get(friendshipId);
 
-    if (!friendship) {
+    if (!friendship || friendship.status !== 'pending') {
       return c.json({ error: 'Friend request not found' }, 404);
     }
 
-    if (friendship.status !== 'pending') {
-      return c.json({ error: 'Request already processed' }, 400);
-    }
-
-    // Update to accepted
-    await kv.set(friendshipId, {
-      ...friendship,
-      status: 'accepted',
-      acceptedAt: new Date().toISOString()
-    });
+    friendship.status = 'accepted';
+    friendship.acceptedAt = new Date().toISOString();
+    await kv.set(friendshipId, friendship);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Accept friend request error:', error);
+  } catch (error: any) {
     return c.json({ error: 'Failed to accept friend request' }, 500);
   }
 });
 
-// Decline friend request
-app.post("/make-server-a1c86d03/friends/decline", async (c) => {
+// Reject friend request
+app.post(`/${SERVER_ID}/friends/reject`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -602,27 +417,20 @@ app.post("/make-server-a1c86d03/friends/decline", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const { requesterId } = await c.req.json();
+    const body = await c.req.json();
+    const { requesterId } = body;
 
-    // Find and delete the friend request
     const friendshipId = `friendship:${requesterId}:${userId}`;
-    const friendship = await kv.get(friendshipId);
-
-    if (!friendship) {
-      return c.json({ error: 'Friend request not found' }, 404);
-    }
-
     await kv.del(friendshipId);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Decline friend request error:', error);
-    return c.json({ error: 'Failed to decline friend request' }, 500);
+  } catch (error: any) {
+    return c.json({ error: 'Failed to reject friend request' }, 500);
   }
 });
 
-// Remove friend
-app.post("/make-server-a1c86d03/friends/remove", async (c) => {
+// Get friends list
+app.get(`/${SERVER_ID}/friends`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -630,94 +438,49 @@ app.post("/make-server-a1c86d03/friends/remove", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const { friendId } = await c.req.json();
+    const friendships = await kv.getByPrefix('friendship:');
+    const friends: any[] = [];
 
-    // Find and delete the friendship (check both directions)
-    const friendshipId1 = `friendship:${userId}:${friendId}`;
-    const friendshipId2 = `friendship:${friendId}:${userId}`;
-    
-    const friendship1 = await kv.get(friendshipId1);
-    const friendship2 = await kv.get(friendshipId2);
-
-    if (friendship1) {
-      await kv.del(friendshipId1);
-    } else if (friendship2) {
-      await kv.del(friendshipId2);
-    } else {
-      return c.json({ error: 'Friendship not found' }, 404);
-    }
-
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Remove friend error:', error);
-    return c.json({ error: 'Failed to remove friend' }, 500);
-  }
-});
-
-// Create group
-app.post("/make-server-a1c86d03/groups", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const { name, memberIds, emoji } = await c.req.json();
-
-    if (!name) {
-      return c.json({ error: 'Group name is required' }, 400);
-    }
-
-    const groupId = crypto.randomUUID();
-    const members = [userId, ...(memberIds || [])];
-
-    await kv.set(`group:${groupId}`, {
-      id: groupId,
-      name,
-      creatorId: userId,
-      members,
-      emoji: emoji || undefined,
-      createdAt: new Date().toISOString()
-    });
-
-    return c.json({ 
-      success: true,
-      group: {
-        id: groupId,
-        name,
-        members,
-        creatorId: userId,
-        emoji: emoji || undefined
+    for (const f of friendships) {
+      if (f.status === 'accepted') {
+        if (f.requesterId === userId) {
+          const friend = await kv.get(`user:${f.receiverId}`);
+          if (friend) friends.push(friend);
+        } else if (f.receiverId === userId) {
+          const friend = await kv.get(`user:${f.requesterId}`);
+          if (friend) friends.push(friend);
+        }
       }
-    });
-  } catch (error) {
-    console.error('Create group error:', error);
-    return c.json({ error: 'Failed to create group' }, 500);
+    }
+
+    return c.json({ friends });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get friends' }, 500);
   }
 });
 
-// Get user's groups
-app.get("/make-server-a1c86d03/groups", async (c) => {
+// Get groups
+app.get(`/${SERVER_ID}/groups`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
     if (!userId) {
-      return c.json({ code: 401, message: 'No user ID provided' }, 401);
+      return c.json({ error: 'No user ID provided' }, 401);
     }
 
     const allGroups = await kv.getByPrefix('group:');
-    const userGroups = allGroups.filter((g: any) => g.members?.includes(userId));
+    const userGroups = allGroups.filter((g: any) => 
+      g.members && g.members.includes(userId)
+    );
 
     return c.json({ groups: userGroups });
-  } catch (error) {
-    console.error('Get groups error:', error);
+  } catch (error: any) {
     return c.json({ error: 'Failed to get groups' }, 500);
   }
 });
 
-// Update group
-app.put("/make-server-a1c86d03/groups/:groupId", async (c) => {
+// Get channels (includes news channel)
+app.get(`/${SERVER_ID}/channels`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -725,207 +488,28 @@ app.put("/make-server-a1c86d03/groups/:groupId", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const groupId = c.req.param('groupId');
-    const { name, emoji } = await c.req.json();
-
-    if (!name) {
-      return c.json({ error: 'Group name is required' }, 400);
-    }
-
-    const group = await kv.get(`group:${groupId}`);
-    if (!group) {
-      return c.json({ error: 'Group not found' }, 404);
-    }
-
-    // Check if user is a member of the group
-    if (!group.members.includes(userId)) {
-      return c.json({ error: 'You are not a member of this group' }, 403);
-    }
-
-    // Update group
-    const updatedGroup = {
-      ...group,
-      name,
-      emoji: emoji !== undefined ? emoji : group.emoji,
-    };
-
-    await kv.set(`group:${groupId}`, updatedGroup);
-
-    return c.json({ success: true, group: updatedGroup });
-  } catch (error) {
-    console.error('Update group error:', error);
-    return c.json({ error: 'Failed to update group' }, 500);
-  }
-});
-
-// Add members to group
-app.post("/make-server-a1c86d03/groups/:groupId/members", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const groupId = c.req.param('groupId');
-    const { memberIds } = await c.req.json();
-
-    if (!memberIds || !Array.isArray(memberIds) || memberIds.length === 0) {
-      return c.json({ error: 'Member IDs are required' }, 400);
-    }
-
-    const group = await kv.get(`group:${groupId}`);
-    if (!group) {
-      return c.json({ error: 'Group not found' }, 404);
-    }
-
-    // Check if user is a member of the group
-    if (!group.members.includes(userId)) {
-      return c.json({ error: 'You are not a member of this group' }, 403);
-    }
-
-    // Filter out members already in the group
-    const newMembers = memberIds.filter((id: string) => !group.members.includes(id));
-
-    if (newMembers.length === 0) {
-      return c.json({ error: 'All selected users are already members' }, 400);
-    }
-
-    // Update group with new members
-    const updatedGroup = {
-      ...group,
-      members: [...group.members, ...newMembers],
-    };
-
-    await kv.set(`group:${groupId}`, updatedGroup);
-
-    return c.json({ success: true, group: updatedGroup, addedCount: newMembers.length });
-  } catch (error) {
-    console.error('Add members error:', error);
-    return c.json({ error: 'Failed to add members' }, 500);
-  }
-});
-
-// Delete group
-app.delete("/make-server-a1c86d03/groups/:groupId", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const groupId = c.req.param('groupId');
-
-    const group = await kv.get(`group:${groupId}`);
-    if (!group) {
-      return c.json({ error: 'Group not found' }, 404);
-    }
-
-    // Only the creator can delete the group
-    if (group.creatorId !== userId) {
-      return c.json({ error: 'Only the group creator can delete the group' }, 403);
-    }
-
-    // Delete the group
-    await kv.del(`group:${groupId}`);
-
-    // Delete all messages in the group
-    const messages = await kv.getByPrefix(`message:${groupId}:`);
-    for (const message of messages) {
-      await kv.del(`message:${groupId}:${message.id}`);
-    }
-
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Delete group error:', error);
-    return c.json({ error: 'Failed to delete group' }, 500);
-  }
-});
-
-// Create channel
-app.post("/make-server-a1c86d03/channels", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const { name, username, emoji } = await c.req.json();
-
-    if (!name || !username) {
-      return c.json({ error: 'Channel name and username are required' }, 400);
-    }
-
-    // Validate channel username format - only English letters, numbers, underscores, and dots
-    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
-    if (!usernameRegex.test(username)) {
-      return c.json({ error: 'Channel username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
-    }
-
-    // Check if channel username already exists
-    const allChannels = await kv.getByPrefix('channel:');
-    const usernameExists = allChannels.some((ch: any) => ch.username?.toLowerCase() === username.toLowerCase());
-
-    if (usernameExists) {
-      return c.json({ error: 'Channel username already taken' }, 400);
-    }
-
-    const channelId = crypto.randomUUID();
-
-    await kv.set(`channel:${channelId}`, {
-      id: channelId,
-      name,
-      username,
-      creatorId: userId,
-      members: [userId],
-      emoji: emoji || undefined,
-      createdAt: new Date().toISOString()
-    });
-
-    return c.json({ 
-      success: true,
-      channel: {
-        id: channelId,
-        name,
-        username,
-        creatorId: userId,
-        members: [userId],
-        emoji: emoji || undefined
-      }
-    });
-  } catch (error) {
-    console.error('Create channel error:', error);
-    return c.json({ error: 'Failed to create channel' }, 500);
-  }
-});
-
-// Get all public channels
-app.get("/make-server-a1c86d03/channels", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ code: 401, message: 'No user ID provided' }, 401);
-    }
-
-    const allChannels = await withRetry(() => kv.getByPrefix('channel:'));
-    
-    // Filter channels to only show channels where user is a member
-    const userChannels = allChannels.filter((channel: any) => 
-      channel.members && channel.members.includes(userId)
+    const allGroups = await kv.getByPrefix('group:');
+    const userGroups = allGroups.filter((g: any) => 
+      g.members && g.members.includes(userId)
     );
 
-    return c.json({ channels: userChannels });
-  } catch (error) {
-    console.error('Get channels error:', error);
+    // Add news channel if user is authenticated
+    const newsChannel = {
+      id: 'news',
+      name: 'News Channel',
+      emoji: '📰',
+      type: 'news',
+      members: ['all']
+    };
+
+    return c.json({ channels: [newsChannel, ...userGroups] });
+  } catch (error: any) {
     return c.json({ error: 'Failed to get channels' }, 500);
   }
 });
 
-// Join channel
-app.post("/make-server-a1c86d03/channels/:channelId/join", async (c) => {
+// Search users
+app.get(`/${SERVER_ID}/search`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -933,35 +517,460 @@ app.post("/make-server-a1c86d03/channels/:channelId/join", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const channelId = c.req.param('channelId');
+    const query = c.req.query('query') || '';
+    
+    if (!query) {
+      return c.json({ users: [], channels: [] });
+    }
 
-    const channel = await kv.get(`channel:${channelId}`);
+    const allUsers = await kv.getByPrefix('user:');
+    const searchLower = query.toLowerCase();
+    
+    const matchedUsers = allUsers.filter((u: any) => 
+      u.id !== userId && (
+        u.username?.toLowerCase().includes(searchLower) ||
+        u.name?.toLowerCase().includes(searchLower) ||
+        u.email?.toLowerCase().includes(searchLower)
+      )
+    );
+
+    const allGroups = await kv.getByPrefix('group:');
+    const matchedChannels = allGroups.filter((g: any) =>
+      g.name?.toLowerCase().includes(searchLower)
+    );
+
+    return c.json({ users: matchedUsers, channels: matchedChannels });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to search' }, 500);
+  }
+});
+
+// Get news
+app.get(`/${SERVER_ID}/news`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const news = await kv.get('news') || [];
+
+    return c.json({ messages: news });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get news' }, 500);
+  }
+});
+
+// Post news (admin only)
+app.post(`/${SERVER_ID}/news`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { content } = body;
+
+    const news = await kv.get('news') || [];
+    
+    const newsItem = {
+      id: crypto.randomUUID(),
+      senderId: userId,
+      content,
+      timestamp: new Date().toISOString()
+    };
+
+    news.push(newsItem);
+    await kv.set('news', news);
+
+    return c.json({ message: newsItem });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to post news' }, 500);
+  }
+});
+
+// Create group
+app.post(`/${SERVER_ID}/groups`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { name, emoji } = body;
+
+    const groupId = crypto.randomUUID();
+    const groupData = {
+      id: groupId,
+      name,
+      emoji: emoji || '👥',
+      members: [userId],
+      createdBy: userId,
+      createdAt: new Date().toISOString()
+    };
+
+    await kv.set(`group:${groupId}`, groupData);
+
+    return c.json({ group: groupData });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to create group' }, 500);
+  }
+});
+
+// Create channel
+app.post(`/${SERVER_ID}/channels`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { name, username, emoji } = body;
+
+    const channelId = crypto.randomUUID();
+    const channelData = {
+      id: channelId,
+      name,
+      username: username || '',
+      emoji: emoji || '👥',
+      members: [userId],
+      creatorId: userId,
+      createdBy: userId,
+      createdAt: new Date().toISOString(),
+      type: 'channel' // Mark this as a channel to distinguish from groups
+    };
+
+    await kv.set(`group:${channelId}`, channelData);
+
+    return c.json({ channel: channelData });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to create channel' }, 500);
+  }
+});
+
+// Get group details
+app.get(`/${SERVER_ID}/groups/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const groupId = c.req.param('id');
+    const group = await kv.get(`group:${groupId}`);
+
+    if (!group) {
+      return c.json({ error: 'Group not found' }, 404);
+    }
+
+    if (!group.members || !group.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this group' }, 403);
+    }
+
+    return c.json({ group });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get group' }, 500);
+  }
+});
+
+// Get channel details
+app.get(`/${SERVER_ID}/channels/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('id');
+    
+    // Handle news channel specially
+    if (channelId === 'news') {
+      return c.json({ 
+        channel: {
+          id: 'news',
+          name: 'News Channel',
+          emoji: '📰',
+          type: 'news',
+          members: ['all']
+        }
+      });
+    }
+    
+    const channel = await kv.get(`group:${channelId}`);
+
     if (!channel) {
       return c.json({ error: 'Channel not found' }, 404);
     }
 
-    // Check if user is already a member
-    if (channel.members?.includes(userId)) {
+    if (!channel.members || !channel.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this channel' }, 403);
+    }
+
+    return c.json({ channel });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get channel' }, 500);
+  }
+});
+
+// Update group
+app.put(`/${SERVER_ID}/groups/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const groupId = c.req.param('id');
+    const body = await c.req.json();
+    const { name, emoji } = body;
+
+    const group = await kv.get(`group:${groupId}`);
+
+    if (!group) {
+      return c.json({ error: 'Group not found' }, 404);
+    }
+
+    if (!group.members || !group.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this group' }, 403);
+    }
+
+    const updatedGroup = {
+      ...group,
+      ...(name && { name }),
+      ...(emoji && { emoji })
+    };
+
+    await kv.set(`group:${groupId}`, updatedGroup);
+
+    return c.json({ group: updatedGroup });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to update group' }, 500);
+  }
+});
+
+// Update channel
+app.put(`/${SERVER_ID}/channels/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('id');
+    const body = await c.req.json();
+    const { name, emoji } = body;
+
+    const channel = await kv.get(`group:${channelId}`);
+
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    if (!channel.members || !channel.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this channel' }, 403);
+    }
+
+    const updatedChannel = {
+      ...channel,
+      ...(name && { name }),
+      ...(emoji && { emoji })
+    };
+
+    await kv.set(`group:${channelId}`, updatedChannel);
+
+    return c.json({ channel: updatedChannel });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to update channel' }, 500);
+  }
+});
+
+// Delete group
+app.delete(`/${SERVER_ID}/groups/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const groupId = c.req.param('id');
+    const group = await kv.get(`group:${groupId}`);
+
+    if (!group) {
+      return c.json({ error: 'Group not found' }, 404);
+    }
+
+    // Only creator can delete
+    if (group.createdBy !== userId) {
+      return c.json({ error: 'Only the creator can delete this group' }, 403);
+    }
+
+    await kv.del(`group:${groupId}`);
+    
+    // Also delete messages
+    await kv.del(`messages:group:${groupId}`);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to delete group' }, 500);
+  }
+});
+
+// Delete channel
+app.delete(`/${SERVER_ID}/channels/:id`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('id');
+    const channel = await kv.get(`group:${channelId}`);
+
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    // Only creator can delete
+    if (channel.createdBy !== userId) {
+      return c.json({ error: 'Only the creator can delete this channel' }, 403);
+    }
+
+    await kv.del(`group:${channelId}`);
+    
+    // Also delete messages
+    await kv.del(`messages:group:${channelId}`);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to delete channel' }, 500);
+  }
+});
+
+// Add member to group
+app.post(`/${SERVER_ID}/groups/:id/members`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const groupId = c.req.param('id');
+    const body = await c.req.json();
+    const { memberId } = body;
+
+    const group = await kv.get(`group:${groupId}`);
+
+    if (!group) {
+      return c.json({ error: 'Group not found' }, 404);
+    }
+
+    if (!group.members || !group.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this group' }, 403);
+    }
+
+    if (group.members.includes(memberId)) {
+      return c.json({ error: 'User already in group' }, 400);
+    }
+
+    group.members.push(memberId);
+    await kv.set(`group:${groupId}`, group);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to add member' }, 500);
+  }
+});
+
+// Add member to channel
+app.post(`/${SERVER_ID}/channels/:id/members`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('id');
+    const body = await c.req.json();
+    const { memberId } = body;
+
+    const channel = await kv.get(`group:${channelId}`);
+
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    if (!channel.members || !channel.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this channel' }, 403);
+    }
+
+    if (channel.members.includes(memberId)) {
+      return c.json({ error: 'User already in channel' }, 400);
+    }
+
+    channel.members.push(memberId);
+    await kv.set(`group:${channelId}`, channel);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to add member' }, 500);
+  }
+});
+
+// Join channel
+app.post(`/${SERVER_ID}/channels/:id/join`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('id');
+    const channel = await kv.get(`group:${channelId}`);
+
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    if (channel.members && channel.members.includes(userId)) {
       return c.json({ error: 'Already a member of this channel' }, 400);
     }
 
-    // Add user to channel members
-    const updatedChannel = {
-      ...channel,
-      members: [...(channel.members || []), userId],
-    };
+    if (!channel.members) {
+      channel.members = [];
+    }
+    
+    channel.members.push(userId);
+    await kv.set(`group:${channelId}`, channel);
 
-    await kv.set(`channel:${channelId}`, updatedChannel);
-
-    return c.json({ success: true, channel: updatedChannel });
-  } catch (error) {
-    console.error('Join channel error:', error);
+    return c.json({ success: true, channel });
+  } catch (error: any) {
     return c.json({ error: 'Failed to join channel' }, 500);
   }
 });
 
 // Leave channel
-app.post("/make-server-a1c86d03/channels/:channelId/leave", async (c) => {
+app.post(`/${SERVER_ID}/channels/:id/leave`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -969,40 +978,36 @@ app.post("/make-server-a1c86d03/channels/:channelId/leave", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const channelId = c.req.param('channelId');
+    const channelId = c.req.param('id');
+    const channel = await kv.get(`group:${channelId}`);
 
-    const channel = await kv.get(`channel:${channelId}`);
     if (!channel) {
       return c.json({ error: 'Channel not found' }, 404);
     }
 
-    // Check if user is a member
-    if (!channel.members?.includes(userId)) {
+    if (!channel.members || !channel.members.includes(userId)) {
       return c.json({ error: 'Not a member of this channel' }, 400);
     }
 
-    // Prevent creator from leaving (they must delete the channel instead)
-    if (channel.creatorId === userId) {
-      return c.json({ error: 'Channel creator cannot leave. Delete the channel instead.' }, 400);
+    // Remove user from members
+    channel.members = channel.members.filter((m: string) => m !== userId);
+    
+    // If no members left, delete the channel
+    if (channel.members.length === 0) {
+      await kv.del(`group:${channelId}`);
+      await kv.del(`messages:group:${channelId}`);
+    } else {
+      await kv.set(`group:${channelId}`, channel);
     }
 
-    // Remove user from channel members
-    const updatedChannel = {
-      ...channel,
-      members: channel.members.filter((id: string) => id !== userId),
-    };
-
-    await kv.set(`channel:${channelId}`, updatedChannel);
-
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Leave channel error:', error);
+  } catch (error: any) {
     return c.json({ error: 'Failed to leave channel' }, 500);
   }
 });
 
-// Update channel
-app.put("/make-server-a1c86d03/channels/:channelId", async (c) => {
+// Remove member from group
+app.delete(`/${SERVER_ID}/groups/:id/members/:memberId`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1010,97 +1015,30 @@ app.put("/make-server-a1c86d03/channels/:channelId", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const channelId = c.req.param('channelId');
-    const { name, username, emoji } = await c.req.json();
+    const groupId = c.req.param('id');
+    const memberId = c.req.param('memberId');
 
-    if (!name || !username) {
-      return c.json({ error: 'Channel name and username are required' }, 400);
+    const group = await kv.get(`group:${groupId}`);
+
+    if (!group) {
+      return c.json({ error: 'Group not found' }, 404);
     }
 
-    // Validate channel username format
-    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
-    if (!usernameRegex.test(username)) {
-      return c.json({ error: 'Channel username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
+    if (!group.members || !group.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this group' }, 403);
     }
 
-    const channel = await kv.get(`channel:${channelId}`);
-    if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
-    }
-
-    // Check if user is the creator
-    if (channel.creatorId !== userId) {
-      return c.json({ error: 'Only the channel creator can edit the channel' }, 403);
-    }
-
-    // Check if username is already taken by another channel
-    if (username !== channel.username) {
-      const allChannels = await kv.getByPrefix('channel:');
-      const usernameExists = allChannels.some((ch: any) => 
-        ch.username?.toLowerCase() === username.toLowerCase() && ch.id !== channelId
-      );
-
-      if (usernameExists) {
-        return c.json({ error: 'Channel username already taken' }, 400);
-      }
-    }
-
-    // Update channel
-    const updatedChannel = {
-      ...channel,
-      name,
-      username,
-      emoji: emoji !== undefined ? emoji : channel.emoji,
-    };
-
-    await kv.set(`channel:${channelId}`, updatedChannel);
-
-    return c.json({ success: true, channel: updatedChannel });
-  } catch (error) {
-    console.error('Update channel error:', error);
-    return c.json({ error: 'Failed to update channel' }, 500);
-  }
-});
-
-// Delete channel
-app.delete("/make-server-a1c86d03/channels/:channelId", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const channelId = c.req.param('channelId');
-
-    const channel = await kv.get(`channel:${channelId}`);
-    if (!channel) {
-      return c.json({ error: 'Channel not found' }, 404);
-    }
-
-    // Only the creator can delete the channel
-    if (channel.creatorId !== userId) {
-      return c.json({ error: 'Only the channel creator can delete the channel' }, 403);
-    }
-
-    // Delete the channel
-    await kv.del(`channel:${channelId}`);
-
-    // Delete all messages in the channel
-    const messages = await kv.getByPrefix(`message:${channelId}:`);
-    for (const message of messages) {
-      await kv.del(`message:${channelId}:${message.id}`);
-    }
+    group.members = group.members.filter((m: string) => m !== memberId);
+    await kv.set(`group:${groupId}`, group);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Delete channel error:', error);
-    return c.json({ error: 'Failed to delete channel' }, 500);
+  } catch (error: any) {
+    return c.json({ error: 'Failed to remove member' }, 500);
   }
 });
 
-// Search users and channels
-app.get("/make-server-a1c86d03/search", async (c) => {
+// Remove member from channel
+app.delete(`/${SERVER_ID}/channels/:id/members/:memberId`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1108,50 +1046,30 @@ app.get("/make-server-a1c86d03/search", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Convert query to lowercase and trim for case-insensitive search
-    const query = c.req.query('query')?.toLowerCase().trim() || '';
-    
-    if (!query || query === '') {
-      return c.json({ results: [] });
+    const channelId = c.req.param('id');
+    const memberId = c.req.param('memberId');
+
+    const channel = await kv.get(`group:${channelId}`);
+
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
     }
 
-    // Search users by name or username (case-insensitive)
-    const allUsers = await kv.getByPrefix('user:');
-    const matchingUsers = allUsers.filter((user: any) => {
-      if (user.id === userId) return false; // Exclude self
-      // Both user fields and query are lowercased for case-insensitive matching
-      const nameMatch = user.name?.toLowerCase().includes(query);
-      const usernameMatch = user.username?.toLowerCase().includes(query);
-      return nameMatch || usernameMatch;
-    }).map((user: any) => ({
-      ...user,
-      type: 'user'
-    }));
+    if (!channel.members || !channel.members.includes(userId)) {
+      return c.json({ error: 'Not a member of this channel' }, 403);
+    }
 
-    // Search channels by name or username (case-insensitive)
-    const allChannels = await kv.getByPrefix('channel:');
-    const matchingChannels = allChannels.filter((channel: any) => {
-      // Both channel fields and query are lowercased for case-insensitive matching
-      const nameMatch = channel.name?.toLowerCase().includes(query);
-      const usernameMatch = channel.username?.toLowerCase().includes(query);
-      return nameMatch || usernameMatch;
-    }).map((channel: any) => ({
-      ...channel,
-      type: 'channel'
-    }));
+    channel.members = channel.members.filter((m: string) => m !== memberId);
+    await kv.set(`group:${channelId}`, channel);
 
-    // Combine and return results
-    const results = [...matchingUsers, ...matchingChannels];
-
-    return c.json({ results });
-  } catch (error) {
-    console.error('Search error:', error);
-    return c.json({ error: 'Failed to search' }, 500);
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to remove member' }, 500);
   }
 });
 
-// Send message
-app.post("/make-server-a1c86d03/messages", async (c) => {
+// Get messages
+app.get(`/${SERVER_ID}/messages`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1159,55 +1077,24 @@ app.post("/make-server-a1c86d03/messages", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const { chatId, text, chatType } = await c.req.json();
+    const chatId = c.req.query('chatId');
+    const chatType = c.req.query('chatType');
 
-    if (!chatId || !text) {
-      return c.json({ error: 'Missing required fields' }, 400);
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
     }
 
-    const messageId = crypto.randomUUID();
-    const message = {
-      id: messageId,
-      chatId,
-      chatType,
-      senderId: userId,
-      text,
-      timestamp: new Date().toISOString()
-    };
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
 
-    await kv.set(`message:${chatId}:${messageId}`, message);
-
-    return c.json({ success: true, message });
-  } catch (error) {
-    console.error('Send message error:', error);
-    return c.json({ error: 'Failed to send message' }, 500);
-  }
-});
-
-// Get messages for a chat
-app.get("/make-server-a1c86d03/messages/:chatId", async (c) => {
-  try {
-    const userId = getUserIdFromRequest(c);
-    const chatId = c.req.param('chatId');
-    
-    if (!userId) {
-      return c.json({ error: 'No user ID provided' }, 401);
-    }
-
-    const messages = await kv.getByPrefix(`message:${chatId}:`);
-    const sortedMessages = messages.sort((a: any, b: any) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-
-    return c.json({ messages: sortedMessages });
-  } catch (error) {
-    console.error('Get messages error:', error);
+    return c.json({ messages });
+  } catch (error: any) {
     return c.json({ error: 'Failed to get messages' }, 500);
   }
 });
 
-// Get news channel messages (special endpoint)
-app.get("/make-server-a1c86d03/news", async (c) => {
+// Get messages by chat ID (path parameter version)
+app.get(`/${SERVER_ID}/messages/:chatId`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1215,20 +1102,34 @@ app.get("/make-server-a1c86d03/news", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    const messages = await kv.getByPrefix(`message:news-channel:`);
-    const sortedMessages = messages.sort((a: any, b: any) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    const chatId = c.req.param('chatId');
+    
+    // Try to determine chat type based on chatId
+    let chatType = 'friend';
+    
+    // Check if it's a group
+    const group = await kv.get(`group:${chatId}`);
+    if (group) {
+      chatType = 'group';
+    }
+    
+    // Check if it's news
+    if (chatId === 'news') {
+      const news = await kv.get('news') || [];
+      return c.json({ messages: news });
+    }
 
-    return c.json({ messages: sortedMessages });
-  } catch (error) {
-    console.error('Get news messages error:', error);
-    return c.json({ error: 'Failed to get news messages' }, 500);
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+
+    return c.json({ messages });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get messages' }, 500);
   }
 });
 
-// Post message to news channel (admin only)
-app.post("/make-server-a1c86d03/news", async (c) => {
+// Send message
+app.post(`/${SERVER_ID}/messages`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1236,37 +1137,34 @@ app.post("/make-server-a1c86d03/news", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin
-    if (!(await isAdmin(userId))) {
-      return c.json({ error: 'Unauthorized - Only admin can post to news channel' }, 403);
+    const body = await c.req.json();
+    const { chatId, chatType, content } = body;
+
+    if (!chatId || !chatType || !content) {
+      return c.json({ error: 'chatId, chatType, and content are required' }, 400);
     }
 
-    const { text } = await c.req.json();
-    
-    if (!text || !text.trim()) {
-      return c.json({ error: 'Message text is required' }, 400);
-    }
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
 
-    const messageId = crypto.randomUUID();
     const message = {
-      id: messageId,
-      chatId: 'news-channel',
+      id: crypto.randomUUID(),
       senderId: userId,
-      text: text.trim(),
-      timestamp: new Date().toISOString(),
+      content,
+      timestamp: new Date().toISOString()
     };
 
-    await kv.set(`message:news-channel:${messageId}`, message);
+    messages.push(message);
+    await kv.set(messageKey, messages);
 
-    return c.json({ success: true, message });
-  } catch (error) {
-    console.error('Post news message error:', error);
-    return c.json({ error: 'Failed to post news message' }, 500);
+    return c.json({ message });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to send message' }, 500);
   }
 });
 
 // Get server statistics
-app.get("/make-server-a1c86d03/stats", async (c) => {
+app.get(`/${SERVER_ID}/stats`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1274,12 +1172,10 @@ app.get("/make-server-a1c86d03/stats", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Get all users
     const allUsers = await kv.getByPrefix('user:');
     const totalUsers = allUsers.length;
 
-    // Get online users (users who have been active in the last 5 minutes)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const onlineUsers = allUsers.filter((user: any) => {
       if (!user.lastActive) return false;
       return user.lastActive > fiveMinutesAgo;
@@ -1289,33 +1185,13 @@ app.get("/make-server-a1c86d03/stats", async (c) => {
       totalUsers,
       onlineUsers
     });
-  } catch (error) {
-    console.error('Get stats error:', error);
+  } catch (error: any) {
     return c.json({ error: 'Failed to get stats' }, 500);
   }
 });
 
-// NO-AUTH KV ENDPOINTS - Temporary bypass for deployment issues
-app.get("/make-server-a1c86d03/kv/get/:key", async (c) => {
-  try {
-    const key = c.req.param('key');
-    const value = await kv.get(key);
-    return c.json({ value });
-  } catch (error) {
-    return c.json({ error: 'KV get failed' }, 500);
-  }
-});
-
-// ===== ADMIN ENDPOINTS - Only for mikhail02323@gmail.com =====
-
-// Helper to check if user is admin
-async function isAdmin(userId: string): Promise<boolean> {
-  const user = await kv.get(`user:${userId}`);
-  return user?.email === 'mikhail02323@gmail.com';
-}
-
-// Get all users (admin only)
-app.get("/make-server-a1c86d03/admin/users", async (c) => {
+// Admin: Get all users
+app.get(`/${SERVER_ID}/admin/users`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
@@ -1323,347 +1199,309 @@ app.get("/make-server-a1c86d03/admin/users", async (c) => {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    if (!(await isAdmin(userId))) {
-      return c.json({ error: 'Unauthorized - Admin access required' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
     const allUsers = await kv.getByPrefix('user:');
     
     return c.json({ users: allUsers });
-  } catch (error) {
-    console.error('Get all users error:', error);
+  } catch (error: any) {
     return c.json({ error: 'Failed to get users' }, 500);
   }
 });
 
-// Delete user (admin only)
-app.delete("/make-server-a1c86d03/admin/users/:targetUserId", async (c) => {
+// Admin: Update user
+app.put(`/${SERVER_ID}/admin/users/:id`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
-    const targetUserId = c.req.param('targetUserId');
     
     if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    if (!(await isAdmin(userId))) {
-      return c.json({ error: 'Unauthorized - Admin access required' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || (currentUser.email !== 'mikhail02323@gmail.com' && !currentUser.isModerator)) {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    // Prevent admin from deleting themselves
-    if (userId === targetUserId) {
-      return c.json({ error: 'Cannot delete your own account' }, 400);
+    const targetUserId = c.req.param('id');
+    const body = await c.req.json();
+
+    const targetUser = await kv.get(`user:${targetUserId}`);
+    if (!targetUser) {
+      return c.json({ error: 'User not found' }, 404);
     }
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
-
-    // Delete from Supabase Auth
-    const { error: authError } = await supabase.auth.admin.deleteUser(targetUserId);
-    if (authError) {
-      console.error('Error deleting user from auth:', authError);
-    }
-
-    // Delete user data from KV
-    await kv.del(`user:${targetUserId}`);
-
-    // Delete all friendships
-    const friendships = await kv.getByPrefix('friendship:');
-    for (const friendship of friendships) {
-      if (friendship.requesterId === targetUserId || friendship.receiverId === targetUserId) {
-        const key = `friendship:${friendship.requesterId}:${friendship.receiverId}`;
-        await kv.del(key);
+    // Moderators can only mark passwords and scammers
+    if (currentUser.isModerator && currentUser.email !== 'mikhail02323@gmail.com') {
+      const allowedFields = ['passwordCompromised', 'isScammer'];
+      const requestedFields = Object.keys(body);
+      const unauthorized = requestedFields.some(f => !allowedFields.includes(f));
+      
+      if (unauthorized) {
+        return c.json({ error: 'Moderators can only update password and scammer status' }, 403);
       }
     }
 
-    // Remove from groups
-    const groups = await kv.getByPrefix('group:');
-    for (const group of groups) {
-      if (group.members?.includes(targetUserId)) {
-        const updatedMembers = group.members.filter((m: string) => m !== targetUserId);
-        await kv.set(`group:${group.id}`, {
-          ...group,
-          members: updatedMembers
-        });
+    const updatedUser = {
+      ...targetUser,
+      ...body
+    };
+
+    // If promoting to moderator, add MOD tag automatically
+    if (body.isModerator && !targetUser.isModerator) {
+      if (!updatedUser.tags) updatedUser.tags = [];
+      if (!updatedUser.tags.includes('MOD')) {
+        updatedUser.tags.push('MOD');
       }
     }
 
-    // Delete user's messages
-    const messages = await kv.getByPrefix('message:');
-    for (const message of messages) {
-      if (message.senderId === targetUserId) {
-        const key = `message:${message.chatId}:${message.id}`;
-        await kv.del(key);
+    // If demoting from moderator, remove MOD tag
+    if (body.isModerator === false && targetUser.isModerator) {
+      if (updatedUser.tags) {
+        updatedUser.tags = updatedUser.tags.filter((t: string) => t !== 'MOD');
       }
     }
 
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Delete user error:', error);
-    return c.json({ error: 'Failed to delete user' }, 500);
+    await kv.set(`user:${targetUserId}`, updatedUser);
+
+    return c.json({ user: updatedUser });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to update user' }, 500);
   }
 });
 
-// Admin: Change user password
-app.post("/make-server-a1c86d03/admin/users/:userId/password", async (c) => {
+// Admin: Get news
+app.get(`/${SERVER_ID}/admin/news`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin
-    if (!(await isAdmin(adminUserId))) {
-      return c.json({ error: 'Unauthorized - Admin only' }, 403);
-    }
+    const news = await kv.get('news') || [];
 
-    const targetUserId = c.req.param('userId');
-    const { newPassword } = await c.req.json();
-
-    if (!newPassword || newPassword.length < 6) {
-      return c.json({ error: 'Password must be at least 6 characters' }, 400);
-    }
-
-    // Update password in Supabase Auth
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
-    
-    const { error } = await supabase.auth.admin.updateUserById(
-      targetUserId,
-      { password: newPassword }
-    );
-
-    if (error) {
-      console.error('Failed to update password:', error);
-      return c.json({ error: 'Failed to update password: ' + error.message }, 500);
-    }
-
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Change password error:', error);
-    return c.json({ error: 'Failed to change password' }, 500);
+    return c.json({ news });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get news' }, 500);
   }
 });
 
-// Admin: Mark password as compromised (old endpoint for backward compatibility)
-app.post("/make-server-a1c86d03/admin/users/:userId/password-compromised", async (c) => {
+// Admin: Post news
+app.post(`/${SERVER_ID}/admin/news`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin or moderator
-    const currentUser = await kv.get(`user:${adminUserId}`);
-    const isAdminUser = await isAdmin(adminUserId);
-    const isModerator = currentUser?.moderator === true;
-
-    if (!isAdminUser && !isModerator) {
-      return c.json({ error: 'Unauthorized - Admin or Moderator privileges required' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
-    const { compromised } = await c.req.json();
+    const body = await c.req.json();
+    const { content } = body;
 
-    // Get user and set compromised status
-    const user = await kv.get(`user:${targetUserId}`);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    const news = await kv.get('news') || [];
+    
+    const newsItem = {
+      id: crypto.randomUUID(),
+      content,
+      createdAt: new Date().toISOString(),
+      authorId: userId
+    };
 
-    user.passwordCompromised = compromised;
-    await kv.set(`user:${targetUserId}`, user);
+    news.unshift(newsItem);
+    await kv.set('news', news);
 
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Mark password compromised error:', error);
-    return c.json({ error: 'Failed to mark password as compromised' }, 500);
+    return c.json({ news: newsItem });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to post news' }, 500);
   }
 });
 
-// Admin: Set user tag
-app.post("/make-server-a1c86d03/admin/users/:userId/tag", async (c) => {
+// Troll: Global broadcast
+app.post(`/${SERVER_ID}/admin/troll/broadcast`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin or moderator
-    const currentUser = await kv.get(`user:${adminUserId}`);
-    const isAdminUser = await isAdmin(adminUserId);
-    const isModerator = currentUser?.moderator === true;
-
-    if (!isAdminUser && !isModerator) {
-      return c.json({ error: 'Unauthorized - Admin or Moderator privileges required' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
-    const { tag, tagColor } = await c.req.json();
+    const body = await c.req.json();
+    const { message } = body;
 
-    // Get user and set tag
-    const user = await kv.get(`user:${targetUserId}`);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    const trollData = {
+      type: 'broadcast',
+      message,
+      timestamp: new Date().toISOString()
+    };
 
-    user.tag = tag;
-    user.tagColor = tagColor;
-    await kv.set(`user:${targetUserId}`, user);
+    await kv.set('troll:active', trollData);
+
+    setTimeout(async () => {
+      await kv.del('troll:active');
+    }, 10000);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Set user tag error:', error);
-    return c.json({ error: 'Failed to set user tag' }, 500);
+  } catch (error: any) {
+    return c.json({ error: 'Failed to broadcast' }, 500);
   }
 });
 
-// Admin: Verify/unverify user
-app.post("/make-server-a1c86d03/admin/users/:userId/verify", async (c) => {
+// Troll: Screen shake
+app.post(`/${SERVER_ID}/admin/troll/shake`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin
-    if (!(await isAdmin(adminUserId))) {
-      return c.json({ error: 'Unauthorized - Admin only' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
-    const { verified } = await c.req.json();
+    const trollData = {
+      type: 'shake',
+      timestamp: new Date().toISOString()
+    };
 
-    // Get user and set verified status
-    const user = await kv.get(`user:${targetUserId}`);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    await kv.set('troll:active', trollData);
 
-    user.verified = verified;
-    await kv.set(`user:${targetUserId}`, user);
+    setTimeout(async () => {
+      await kv.del('troll:active');
+    }, 5000);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Verify user error:', error);
-    return c.json({ error: 'Failed to verify user' }, 500);
+  } catch (error: any) {
+    return c.json({ error: 'Failed to shake' }, 500);
   }
 });
 
-// Admin: Verify/unverify user email
-app.post("/make-server-a1c86d03/admin/users/:userId/verify-email", async (c) => {
+// Troll: Confetti
+app.post(`/${SERVER_ID}/admin/troll/confetti`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin
-    if (!(await isAdmin(adminUserId))) {
-      return c.json({ error: 'Unauthorized - Admin only' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
-    const { emailVerified } = await c.req.json();
+    const trollData = {
+      type: 'confetti',
+      timestamp: new Date().toISOString()
+    };
 
-    // Get user and set email verified status
-    const user = await kv.get(`user:${targetUserId}`);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    await kv.set('troll:active', trollData);
 
-    user.emailVerified = emailVerified;
-    await kv.set(`user:${targetUserId}`, user);
+    setTimeout(async () => {
+      await kv.del('troll:active');
+    }, 5000);
 
     return c.json({ success: true });
-  } catch (error) {
-    console.error('Verify email error:', error);
-    return c.json({ error: 'Failed to verify email' }, 500);
+  } catch (error: any) {
+    return c.json({ error: 'Failed to trigger confetti' }, 500);
   }
 });
 
-// Admin: Set moderator status
-app.post("/make-server-a1c86d03/admin/users/:userId/moderator", async (c) => {
+// Troll: Fake update
+app.post(`/${SERVER_ID}/admin/troll/update`, async (c) => {
   try {
-    const adminUserId = getUserIdFromRequest(c);
+    const userId = getUserIdFromRequest(c);
     
-    if (!adminUserId) {
+    if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
-    // Check if user is admin (only admins can promote to moderator)
-    if (!(await isAdmin(adminUserId))) {
-      return c.json({ error: 'Unauthorized - Admin only' }, 403);
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
-    const { moderator } = await c.req.json();
+    const trollData = {
+      type: 'update',
+      timestamp: new Date().toISOString()
+    };
 
-    // Get user and set moderator status
-    const user = await kv.get(`user:${targetUserId}`);
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    await kv.set('troll:active', trollData);
 
-    user.moderator = moderator;
+    setTimeout(async () => {
+      await kv.del('troll:active');
+    }, 10000);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to trigger update' }, 500);
+  }
+});
+
+// Troll: Emoji rain
+app.post(`/${SERVER_ID}/admin/troll/emoji-rain`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
     
-    // When promoting to moderator, automatically set yellow MOD tag
-    if (moderator) {
-      user.tag = 'MOD';
-      user.tagColor = '#eab308'; // yellow-500
-    } else {
-      // When removing moderator, clear the MOD tag if it was set
-      if (user.tag === 'MOD') {
-        user.tag = undefined;
-        user.tagColor = undefined;
-      }
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
     }
+
+    const currentUser = await kv.get(`user:${userId}`);
+    if (!currentUser || currentUser.email !== 'mikhail02323@gmail.com') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { emoji } = body;
+
+    const trollData = {
+      type: 'emoji-rain',
+      emoji: emoji || '🎉',
+      timestamp: new Date().toISOString()
+    };
+
+    await kv.set('troll:active', trollData);
+
+    setTimeout(async () => {
+      await kv.del('troll:active');
+    }, 5000);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to trigger emoji rain' }, 500);
+  }
+});
+
+// Get active troll
+app.get(`/${SERVER_ID}/troll/active`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
     
-    await kv.set(`user:${targetUserId}`, user);
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
 
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Set moderator error:', error);
-    return c.json({ error: 'Failed to set moderator status' }, 500);
-  }
-});
+    const trollData = await kv.get('troll:active');
 
-app.get("/make-server-a1c86d03/kv/prefix/:prefix", async (c) => {
-  try {
-    const prefix = c.req.param('prefix');
-    const values = await kv.getByPrefix(prefix);
-    return c.json({ values });
-  } catch (error) {
-    return c.json({ error: 'KV getByPrefix failed' }, 500);
-  }
-});
-
-app.post("/make-server-a1c86d03/kv/set", async (c) => {
-  try {
-    const { key, value } = await c.req.json();
-    await kv.set(key, value);
-    return c.json({ success: true });
-  } catch (error) {
-    return c.json({ error: 'KV set failed' }, 500);
-  }
-});
-
-app.delete("/make-server-a1c86d03/kv/delete/:key", async (c) => {
-  try {
-    const key = c.req.param('key');
-    await kv.del(key);
-    return c.json({ success: true });
-  } catch (error) {
-    return c.json({ error: 'KV del failed' }, 500);
+    return c.json({ troll: trollData || null });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get troll data' }, 500);
   }
 });
 

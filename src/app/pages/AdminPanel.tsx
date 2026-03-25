@@ -145,6 +145,10 @@ export default function AdminPanel() {
       );
 
       if (!response.ok) {
+        // Silently return if not authorized (expected for non-admin users)
+        if (response.status === 403) {
+          return;
+        }
         const errorText = await response.text();
         console.error("Failed to load all users:", response.status, response.statusText, errorText);
         return;

@@ -97,10 +97,11 @@ interface Group {
 interface Channel {
   id: string;
   name: string;
-  username: string;
-  creatorId: string;
+  username?: string;
+  creatorId?: string;
   emoji?: string;
-  members: string[];
+  members?: string[];
+  type?: string;
 }
 
 interface Message {
@@ -116,7 +117,6 @@ export default function ChatMain() {
   const { theme, toggleTheme } = useTheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
@@ -364,12 +364,12 @@ export default function ChatMain() {
         console.log("=== SERVER VERSION CHECK ===");
         console.log("Server version:", data.version);
         console.log("Server timestamp:", data.timestamp);
-        console.log("Expected version: 2024-03-19-v9");
+        console.log("Expected version: 2024-03-25-v17-channels-consolidation");
         
         if (!data.version) {
           console.warn("WARNING: Server did not return version info. Server may not be deployed.");
           console.warn("Response data:", data);
-        } else if (data.version !== "2024-03-19-v9") {
+        } else if (data.version !== "2024-03-25-v17-channels-consolidation") {
           console.warn("WARNING: Server version mismatch! Old code might be running.");
           console.warn("Current version:", data.version);
         } else {
@@ -384,7 +384,6 @@ export default function ChatMain() {
     checkServerVersion();
     loadCurrentUser();
     loadFriends();
-    loadGroups();
     loadChannels();
     loadFriendRequests();
     loadStats();
@@ -567,8 +566,11 @@ export default function ChatMain() {
         if (status === 'SUBSCRIBED') {
           console.log('[Troll] Successfully subscribed to troll channel');
           setTrollChannelConnected(true);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          console.error('[Troll] Channel connection failed or closed:', status);
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[Troll] Channel connection issue:', status);
+          setTrollChannelConnected(false);
+        } else if (status === 'CLOSED') {
+          // Silently handle closed state - this is normal during cleanup
           setTrollChannelConnected(false);
         }
       });
@@ -586,9 +588,12 @@ export default function ChatMain() {
   const loadCurrentUser = async () => {
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${userId}`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user`,
         {
-          headers: { Authorization: `Bearer ${publicAnonKey}` },
+          headers: { 
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || ''
+          },
         }
       );
       const data = await response.json();
@@ -666,37 +671,6 @@ export default function ChatMain() {
       }
     } catch (error) {
       console.error("Failed to load friends:", error);
-    }
-  };
-
-  const loadGroups = async () => {
-    if (!userId) {
-      console.log("Skipping loadGroups - no userId");
-      return;
-    }
-    
-    try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups`,
-        {
-          headers: { 
-            Authorization: `Bearer ${publicAnonKey}`,
-            'X-User-Id': userId
-          },
-        }
-      );
-      
-      if (!response.ok) {
-        console.error("Failed to load groups:", response.status);
-        return;
-      }
-      
-      const data = await response.json();
-      if (data.groups) {
-        setGroups(data.groups);
-      }
-    } catch (error) {
-      console.error("Failed to load groups:", error);
     }
   };
 
@@ -869,7 +843,7 @@ export default function ChatMain() {
     
     try {
       await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/users/activity`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/activity`,
         {
           method: "POST",
           headers: { 
@@ -899,6 +873,10 @@ export default function ChatMain() {
       );
 
       if (!response.ok) {
+        // Silently return if not authorized (expected for non-admin users)
+        if (response.status === 403) {
+          return;
+        }
         const errorText = await response.text();
         console.error("Failed to load all users:", response.status, response.statusText, errorText);
         return;
@@ -971,7 +949,19 @@ export default function ChatMain() {
         }
       );
 
-      const data = await response.json();
+      let data;
+      try {
+        const text = await response.text();
+        console.log("Raw response text:", JSON.stringify(text));
+        console.log("Response text first 50 chars:", text.substring(0, 50));
+        console.log("Response text char codes:", Array.from(text.substring(0, 20)).map(c => c.charCodeAt(0)));
+        data = JSON.parse(text);
+      } catch (jsonError) {
+        console.error("Failed to parse JSON response:", jsonError);
+        toast.error("Server error: Invalid response");
+        return;
+      }
+      
       console.log("Add friend response:", response.status, data);
       
       if (!response.ok) {
@@ -993,7 +983,7 @@ export default function ChatMain() {
     e.preventDefault();
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels`,
         {
           method: "POST",
           headers: {
@@ -1017,7 +1007,7 @@ export default function ChatMain() {
       setShowCreateGroupEmojiPicker(false);
       setSelectedFriendsForGroup([]);
       setCreateGroupOpen(false);
-      loadGroups();
+      loadChannels();
     } catch (error) {
       console.error("Create group error:", error);
       toast.error("Failed to create group");
@@ -1030,7 +1020,7 @@ export default function ChatMain() {
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${addMembersGroup.id}/members`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${addMembersGroup.id}/members`,
         {
           method: "POST",
           headers: {
@@ -1051,7 +1041,7 @@ export default function ChatMain() {
       toast.success("Members added successfully!");
       setSelectedMembersToAdd([]);
       setAddMembersGroup(null);
-      loadGroups();
+      loadChannels();
     } catch (error) {
       console.error("Add members error:", error);
       toast.error("Failed to add members");
@@ -1061,7 +1051,7 @@ export default function ChatMain() {
   const handleDeleteGroup = async (groupId: string) => {
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${groupId}`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${groupId}`,
         {
           method: "DELETE",
           headers: {
@@ -1084,7 +1074,7 @@ export default function ChatMain() {
         setSelectedChat(null);
       }
       
-      loadGroups();
+      loadChannels();
     } catch (error) {
       console.error("Delete group error:", error);
       toast.error("Failed to delete group");
@@ -2386,13 +2376,13 @@ export default function ChatMain() {
       <div className="mt-4 mb-2 px-2">
         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Groups</h3>
       </div>
-      {groups.length === 0 ? (
+      {channels.filter(c => c.id !== 'news' && c.type !== 'channel').length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-4 px-2">
           No groups yet
         </div>
       ) : (
         <div className="space-y-1">
-          {groups.map((group) => (
+          {channels.filter(c => c.id !== 'news' && c.type !== 'channel').map((group) => (
             <div
               key={group.id}
               className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
@@ -2474,13 +2464,13 @@ export default function ChatMain() {
       <div className="mt-4 mb-2 px-2">
         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Channels</h3>
       </div>
-      {channels.length === 0 ? (
+      {channels.filter(c => c.type === 'channel').length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-4 px-2">
           No channels yet
         </div>
       ) : (
         <div className="space-y-1">
-          {channels.map((channel) => (
+          {channels.filter(c => c.type === 'channel').map((channel) => (
             <div
               key={channel.id}
               className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
@@ -2591,8 +2581,8 @@ export default function ChatMain() {
                     {selectedChat.type === 'news' ? (
                       <span className="text-2xl">📰</span>
                     ) : selectedChat.type === 'group' ? (
-                      groups.find(g => g.id === selectedChat.id)?.emoji ? (
-                        <span className="text-2xl">{groups.find(g => g.id === selectedChat.id)?.emoji}</span>
+                      channels.find(g => g.id === selectedChat.id)?.emoji ? (
+                        <span className="text-2xl">{channels.find(g => g.id === selectedChat.id)?.emoji}</span>
                       ) : (
                         <Users className="size-5" />
                       )
@@ -3444,7 +3434,7 @@ export default function ChatMain() {
             
             try {
               const response = await fetch(
-                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${editingGroup.id}`,
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${editingGroup.id}`,
                 {
                   method: "PUT",
                   headers: {
@@ -3464,7 +3454,7 @@ export default function ChatMain() {
 
               toast.success("Group updated!");
               setEditingGroup(null);
-              loadGroups();
+              loadChannels();
               
               // Update selected chat if this group is currently selected
               if (selectedChat?.id === editingGroup.id) {
