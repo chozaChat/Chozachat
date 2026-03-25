@@ -168,6 +168,10 @@ export default function ChatMain() {
   const [moderatorSearchResults, setModeratorSearchResults] = useState<User[]>([]);
   const [selectedUserForMod, setSelectedUserForMod] = useState<User | null>(null);
 
+  // Refs for Realtime channels
+  const messageChannelRef = useRef<any>(null);
+  const trollChannelRef = useRef<any>(null);
+
   // CLIENT-ONLY MODE - Bypass server entirely
   const CLIENT_ONLY_MODE = false;
   
@@ -381,43 +385,58 @@ export default function ChatMain() {
     loadStats();
     updateLastActive();
 
-    // Poll for new messages every 2 seconds
-    const pollIntervalRef = setInterval(() => {
-      if (selectedChat) {
-        loadMessages(selectedChat.type, selectedChat.id);
+    // Set up Supabase Realtime for messages
+    if (selectedChat) {
+      // Unsubscribe from previous channel if it exists
+      if (messageChannelRef.current) {
+        supabase.removeChannel(messageChannelRef.current);
       }
-      // Also poll for friend requests and stats, and update activity
+
+      const channelName = `chat-${selectedChat.type}-${selectedChat.id}`;
+      messageChannelRef.current = supabase.channel(channelName);
+      
+      // Subscribe to new messages
+      messageChannelRef.current
+        .on('broadcast', { event: 'new-message' }, (payload: any) => {
+          console.log('Received new message:', payload);
+          // Reload messages when a new message is broadcast
+          loadMessages(selectedChat.type, selectedChat.id);
+        })
+        .subscribe((status: string) => {
+          console.log('Message channel status:', status);
+        });
+    }
+
+    // Update stats and activity periodically (still needed for online status)
+    const statsInterval = setInterval(() => {
       loadFriendRequests();
       loadStats();
       updateLastActive();
-    }, 2000);
+    }, 5000); // Check every 5 seconds instead of 2
 
     return () => {
-      clearInterval(pollIntervalRef);
+      if (messageChannelRef.current) {
+        supabase.removeChannel(messageChannelRef.current);
+        messageChannelRef.current = null;
+      }
+      clearInterval(statsInterval);
     };
   }, [userId, selectedChat]);
 
-  // Listen for admin commands
+  // Listen for troll zone effects via Supabase Realtime
   useEffect(() => {
-    const checkAdminCommands = () => {
-      const commandStr = localStorage.getItem('adminCommand');
-      if (!commandStr) return;
+    if (!userId) return;
 
-      try {
-        const command = JSON.parse(commandStr);
-        const lastProcessed = localStorage.getItem('lastProcessedCommand');
+    trollChannelRef.current = supabase.channel('troll-zone-global');
+    
+    trollChannelRef.current
+      .on('broadcast', { event: 'troll-action' }, (payload: any) => {
+        console.log('Received troll action:', payload);
+        const command = payload.payload;
         
-        // Only process if this is a new command
-        if (lastProcessed && parseInt(lastProcessed) >= command.timestamp) {
-          return;
-        }
-
-        // Mark as processed
-        localStorage.setItem('lastProcessedCommand', command.timestamp.toString());
-
         // Execute command based on type
-        switch (command.type) {
-          case 'message':
+        switch (command.action) {
+          case 'broadcast':
             toast.info(command.message, {
               duration: 5000,
               style: {
@@ -474,7 +493,7 @@ export default function ChatMain() {
               style: {
                 background: '#dc2626',
                 color: 'white',
-                fontSize: '16px',
+                fontSize: '#16px',
                 fontWeight: 'bold'
               }
             });
@@ -510,19 +529,18 @@ export default function ChatMain() {
             setTimeout(() => emojiContainer.remove(), 6000);
             break;
         }
-      } catch (error) {
-        console.error('Failed to process admin command:', error);
+      })
+      .subscribe((status: string) => {
+        console.log('Troll channel status:', status);
+      });
+
+    return () => {
+      if (trollChannelRef.current) {
+        supabase.removeChannel(trollChannelRef.current);
+        trollChannelRef.current = null;
       }
     };
-
-    // Check for commands every second
-    const commandInterval = setInterval(checkAdminCommands, 1000);
-    
-    // Check immediately on mount
-    checkAdminCommands();
-
-    return () => clearInterval(commandInterval);
-  }, []);
+  }, [userId]);
 
   const loadCurrentUser = async () => {
     try {
@@ -1153,6 +1171,16 @@ export default function ChatMain() {
 
         setMessageText("");
         loadMessages('news', 'news-channel');
+        
+        // Broadcast new news message via Realtime using existing channel
+        if (messageChannelRef.current) {
+          await messageChannelRef.current.send({
+            type: 'broadcast',
+            event: 'new-message',
+            payload: { chatType: 'news', chatId: 'news-channel' }
+          });
+        }
+        
         toast.success("News posted!");
         return;
       }
@@ -1181,6 +1209,15 @@ export default function ChatMain() {
 
       setMessageText("");
       loadMessages(selectedChat.type, selectedChat.id);
+      
+      // Broadcast new message via Realtime using existing channel
+      if (messageChannelRef.current) {
+        await messageChannelRef.current.send({
+          type: 'broadcast',
+          event: 'new-message',
+          payload: { chatType: selectedChat.type, chatId: selectedChat.id }
+        });
+      }
     } catch (error) {
       console.error("Send message error:", error);
       toast.error("Failed to send message");
@@ -2751,12 +2788,16 @@ export default function ChatMain() {
                     const message = prompt("Enter broadcast message:");
                     if (message) {
                       try {
-                        localStorage.setItem('global-troll-action', JSON.stringify({
-                          action: 'broadcast',
-                          message,
-                          timestamp: Date.now()
-                        }));
-                        toast.success("Broadcast sent to all users!");
+                        if (trollChannelRef.current) {
+                          await trollChannelRef.current.send({
+                            type: 'broadcast',
+                            event: 'troll-action',
+                            payload: { action: 'broadcast', message }
+                          });
+                          toast.success("Broadcast sent to all users!");
+                        } else {
+                          toast.error("Troll channel not ready");
+                        }
                       } catch (error) {
                         console.error("Broadcast error:", error);
                         toast.error("Failed to send broadcast");
@@ -2772,11 +2813,16 @@ export default function ChatMain() {
                   variant="secondary"
                   onClick={async () => {
                     try {
-                      localStorage.setItem('global-troll-action', JSON.stringify({
-                        action: 'shake',
-                        timestamp: Date.now()
-                      }));
-                      toast.success("Screen shake activated for all users!");
+                      if (trollChannelRef.current) {
+                        await trollChannelRef.current.send({
+                          type: 'broadcast',
+                          event: 'troll-action',
+                          payload: { action: 'shake' }
+                        });
+                        toast.success("Screen shake activated for all users!");
+                      } else {
+                        toast.error("Troll channel not ready");
+                      }
                     } catch (error) {
                       console.error("Shake error:", error);
                       toast.error("Failed to activate shake");
@@ -2791,11 +2837,16 @@ export default function ChatMain() {
                   variant="secondary"
                   onClick={async () => {
                     try {
-                      localStorage.setItem('global-troll-action', JSON.stringify({
-                        action: 'confetti',
-                        timestamp: Date.now()
-                      }));
-                      toast.success("Confetti explosion activated!");
+                      if (trollChannelRef.current) {
+                        await trollChannelRef.current.send({
+                          type: 'broadcast',
+                          event: 'troll-action',
+                          payload: { action: 'confetti' }
+                        });
+                        toast.success("Confetti explosion activated!");
+                      } else {
+                        toast.error("Troll channel not ready");
+                      }
                     } catch (error) {
                       console.error("Confetti error:", error);
                       toast.error("Failed to activate confetti");
@@ -2810,11 +2861,16 @@ export default function ChatMain() {
                   variant="secondary"
                   onClick={async () => {
                     try {
-                      localStorage.setItem('global-troll-action', JSON.stringify({
-                        action: 'fakeUpdate',
-                        timestamp: Date.now()
-                      }));
-                      toast.success("Fake update alert sent!");
+                      if (trollChannelRef.current) {
+                        await trollChannelRef.current.send({
+                          type: 'broadcast',
+                          event: 'troll-action',
+                          payload: { action: 'update' }
+                        });
+                        toast.success("Fake update alert sent!");
+                      } else {
+                        toast.error("Troll channel not ready");
+                      }
                     } catch (error) {
                       console.error("Fake update error:", error);
                       toast.error("Failed to send fake update");
@@ -2829,11 +2885,16 @@ export default function ChatMain() {
                   variant="secondary"
                   onClick={async () => {
                     try {
-                      localStorage.setItem('global-troll-action', JSON.stringify({
-                        action: 'emojiRain',
-                        timestamp: Date.now()
-                      }));
-                      toast.success("Emoji rain activated!");
+                      if (trollChannelRef.current) {
+                        await trollChannelRef.current.send({
+                          type: 'broadcast',
+                          event: 'troll-action',
+                          payload: { action: 'emojiRain' }
+                        });
+                        toast.success("Emoji rain activated!");
+                      } else {
+                        toast.error("Troll channel not ready");
+                      }
                     } catch (error) {
                       console.error("Emoji rain error:", error);
                       toast.error("Failed to activate emoji rain");

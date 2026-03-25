@@ -59,7 +59,10 @@ async function withRetry<T>(
         errorMessage.includes('connection reset') ||
         errorMessage.includes('connection error') ||
         errorMessage.includes('timeout') ||
-        errorMessage.includes('ECONNRESET');
+        errorMessage.includes('ECONNRESET') ||
+        errorMessage.includes('TLS close_notify') ||
+        errorMessage.includes('peer closed connection') ||
+        errorMessage.includes('os error 104');
       
       if (isRetryable && attempt < maxRetries) {
         console.log(`Retry attempt ${attempt}/${maxRetries} after error:`, errorMessage);
@@ -489,7 +492,7 @@ app.get("/make-server-a1c86d03/friends", async (c) => {
       return c.json({ code: 401, message: 'No user ID provided' }, 401);
     }
 
-    const friendships = await kv.getByPrefix('friendship:');
+    const friendships = await withRetry(() => kv.getByPrefix('friendship:'));
     const friendIds: string[] = [];
 
     // Only include accepted friendships
@@ -504,7 +507,7 @@ app.get("/make-server-a1c86d03/friends", async (c) => {
     });
 
     const friends = await Promise.all(
-      friendIds.map(id => kv.get(`user:${id}`))
+      friendIds.map(id => withRetry(() => kv.get(`user:${id}`)))
     );
 
     return c.json({ friends: friends.filter(Boolean) });
@@ -528,13 +531,13 @@ app.get("/make-server-a1c86d03/friends/requests", async (c) => {
 
     console.log("Friend requests - User authenticated:", userId);
 
-    const friendships = await kv.getByPrefix('friendship:');
+    const friendships = await withRetry(() => kv.getByPrefix('friendship:'));
     const pendingRequests: any[] = [];
 
     // Get requests sent to this user
     for (const f of friendships) {
       if (f.status === 'pending' && f.receiverId === userId) {
-        const requester = await kv.get(`user:${f.requesterId}`);
+        const requester = await withRetry(() => kv.get(`user:${f.requesterId}`));
         if (requester) {
           pendingRequests.push({
             ...f,
