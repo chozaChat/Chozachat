@@ -8,11 +8,12 @@ import { Input } from "../components/ui/input";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "../components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
-import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun } from "lucide-react";
+import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 
@@ -93,6 +94,15 @@ interface Group {
   emoji?: string;
 }
 
+interface Channel {
+  id: string;
+  name: string;
+  username: string;
+  creatorId: string;
+  emoji?: string;
+  members: string[];
+}
+
 interface Message {
   id: string;
   chatId: string;
@@ -107,17 +117,24 @@ export default function ChatMain() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
-  const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news', id: string, name: string, friendData?: Friend } | null>(null);
+  const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news' | 'channel', id: string, name: string, friendData?: Friend } | null>(null);
   const [messageText, setMessageText] = useState("");
-  const [friendEmail, setFriendEmail] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<(User | Channel)[]>([]);
   const [groupName, setGroupName] = useState("");
   const [groupEmoji, setGroupEmoji] = useState("");
+  const [channelName, setChannelName] = useState("");
+  const [channelUsername, setChannelUsername] = useState("");
+  const [channelEmoji, setChannelEmoji] = useState("");
   const [showCreateGroupEmojiPicker, setShowCreateGroupEmojiPicker] = useState(false);
+  const [showCreateChannelEmojiPicker, setShowCreateChannelEmojiPicker] = useState(false);
   const [selectedFriendsForGroup, setSelectedFriendsForGroup] = useState<string[]>([]);
-  const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [sideMenuOpen, setSideMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editUsername, setEditUsername] = useState("");
@@ -129,6 +146,11 @@ export default function ChatMain() {
   const [editGroupName, setEditGroupName] = useState("");
   const [editGroupEmoji, setEditGroupEmoji] = useState("");
   const [showGroupEmojiPicker, setShowGroupEmojiPicker] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
+  const [editChannelName, setEditChannelName] = useState("");
+  const [editChannelUsername, setEditChannelUsername] = useState("");
+  const [editChannelEmoji, setEditChannelEmoji] = useState("");
+  const [showEditChannelEmojiPicker, setShowEditChannelEmojiPicker] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [selectedUserForAdmin, setSelectedUserForAdmin] = useState<User | null>(null);
@@ -140,6 +162,11 @@ export default function ChatMain() {
   const [selectedMembersToAdd, setSelectedMembersToAdd] = useState<string[]>([]);
   const [totalUsers, setTotalUsers] = useState<number>(0);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
+  const [adminTab, setAdminTab] = useState<'users' | 'settings' | 'troll'>('users');
+  const [moderatorPanelOpen, setModeratorPanelOpen] = useState(false);
+  const [moderatorSearchQuery, setModeratorSearchQuery] = useState("");
+  const [moderatorSearchResults, setModeratorSearchResults] = useState<User[]>([]);
+  const [selectedUserForMod, setSelectedUserForMod] = useState<User | null>(null);
 
   // CLIENT-ONLY MODE - Bypass server entirely
   const CLIENT_ONLY_MODE = false;
@@ -349,6 +376,7 @@ export default function ChatMain() {
     loadCurrentUser();
     loadFriends();
     loadGroups();
+    loadChannels();
     loadFriendRequests();
     loadStats();
     updateLastActive();
@@ -608,7 +636,38 @@ export default function ChatMain() {
     }
   };
 
-  const loadMessages = async (chatType: 'friend' | 'group' | 'news', chatId: string) => {
+  const loadChannels = async () => {
+    if (!userId) {
+      console.log("Skipping loadChannels - no userId");
+      return;
+    }
+    
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels`,
+        {
+          headers: { 
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        console.error("Failed to load channels:", response.status);
+        return;
+      }
+      
+      const data = await response.json();
+      if (data.channels) {
+        setChannels(data.channels);
+      }
+    } catch (error) {
+      console.error("Failed to load channels:", error);
+    }
+  };
+
+  const loadMessages = async (chatType: 'friend' | 'group' | 'news' | 'channel', chatId: string) => {
     if (!userId) {
       console.log("Skipping loadMessages - no userId");
       return;
@@ -864,6 +923,203 @@ export default function ChatMain() {
     }
   };
 
+  const handleDeleteGroup = async (groupId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${groupId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        toast.error(data.error || "Failed to delete group");
+        return;
+      }
+
+      toast.success("Group deleted successfully!");
+      
+      // Clear selected chat if this group was selected
+      if (selectedChat?.id === groupId) {
+        setSelectedChat(null);
+      }
+      
+      loadGroups();
+    } catch (error) {
+      console.error("Delete group error:", error);
+      toast.error("Failed to delete group");
+    }
+  };
+
+  const handleDeleteChannel = async (channelId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${channelId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        toast.error(data.error || "Failed to delete channel");
+        return;
+      }
+
+      toast.success("Channel deleted successfully!");
+      
+      // Clear selected chat if this channel was selected
+      if (selectedChat?.id === channelId) {
+        setSelectedChat(null);
+      }
+      
+      loadChannels();
+    } catch (error) {
+      console.error("Delete channel error:", error);
+      toast.error("Failed to delete channel");
+    }
+  };
+
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+          body: JSON.stringify({ 
+            name: channelName, 
+            username: channelUsername,
+            emoji: channelEmoji 
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to create channel";
+        try {
+          const data = await response.json();
+          errorMessage = data.error || errorMessage;
+        } catch {
+          // Response is not JSON, use default error message
+        }
+        toast.error(errorMessage);
+        return;
+      }
+
+      const data = await response.json();
+      toast.success("Channel created successfully!");
+      setChannelName("");
+      setChannelUsername("");
+      setChannelEmoji("");
+      setShowCreateChannelEmojiPicker(false);
+      setCreateChannelOpen(false);
+      loadChannels();
+    } catch (error) {
+      console.error("Create channel error:", error);
+      toast.error("Failed to create channel");
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/search?query=${encodeURIComponent(searchQuery)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+        }
+      );
+
+      const data = await response.json();
+      if (response.ok) {
+        setSearchResults(data.results || []);
+      } else {
+        toast.error("Failed to search");
+      }
+    } catch (error) {
+      console.error("Search error:", error);
+      toast.error("Failed to search");
+    }
+  };
+
+  const handleAddFriendFromSearch = async (friendId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+          body: JSON.stringify({ friendId }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to add friend");
+        return;
+      }
+
+      toast.success("Friend request sent!");
+      loadFriends();
+    } catch (error) {
+      console.error("Add friend error:", error);
+      toast.error("Failed to add friend");
+    }
+  };
+
+  const handleJoinChannel = async (channelId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${channelId}/join`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to join channel");
+        return;
+      }
+
+      toast.success("Joined channel!");
+      loadChannels();
+    } catch (error) {
+      console.error("Join channel error:", error);
+      toast.error("Failed to join channel");
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!messageText.trim() || !selectedChat) return;
@@ -971,6 +1227,19 @@ export default function ChatMain() {
     
     // Load messages for this chat
     loadMessages('group', group.id);
+  };
+
+  const selectChannelChat = (channel: Channel) => {
+    console.log("Selecting channel chat:", channel.name, "channelId:", channel.id);
+    
+    // Clear messages immediately when switching chats
+    setMessages([]);
+    
+    // Set the selected chat
+    setSelectedChat({ type: 'channel', id: channel.id, name: channel.name });
+    
+    // Load messages for this chat
+    loadMessages('channel', channel.id);
   };
 
   const getSenderName = (senderId: string) => {
@@ -1222,89 +1491,52 @@ export default function ChatMain() {
       <div className={`w-full md:w-80 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col ${selectedChat ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
-            <Avatar>
-              <AvatarFallback className="bg-blue-600 text-white">
-                {currentUser?.emoji ? (
-                  <span className="text-2xl">{currentUser.emoji}</span>
-                ) : (
-                  currentUser?.name?.charAt(0).toUpperCase()
-                )}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-semibold dark:text-white">{currentUser?.name}</span>
-                {currentUser?.verified && renderVerifiedBadge()}
-                {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor)}
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">@{currentUser?.username}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1">
-            {currentUser?.email === 'mikhail02323@gmail.com' && (
-              <Button 
-                variant="ghost" 
-                size="icon"
-                onClick={handleAdminPanelOpen}
-                title="Admin Panel"
-              >
-                <Shield className="size-5 text-red-600" />
-              </Button>
-            )}
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={toggleTheme}
-              title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-            >
-              {theme === 'light' ? <Moon className="size-5" /> : <Sun className="size-5" />}
-            </Button>
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-              <DialogTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => {
-                    setEditName(currentUser?.name || "");
-                    setEditUsername(currentUser?.username || "");
-                    setEditTag(currentUser?.tag || "");
-                    setEditTagColor(currentUser?.tagColor || "");
-                    setEditEmoji(currentUser?.emoji || "");
-                    setShowEmojiPicker(false);
-                  }}
-                >
-                  <Settings className="size-5" />
+            <Sheet open={sideMenuOpen} onOpenChange={setSideMenuOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Menu className="size-5" />
                 </Button>
-              </DialogTrigger>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-80 dark:bg-gray-900 dark:border-gray-800">
+                <SheetHeader>
+                  <SheetTitle className="dark:text-white">Menu</SheetTitle>
+                  <SheetDescription className="dark:text-gray-400">Access settings and options</SheetDescription>
+                </SheetHeader>
+                <div className="mt-6 space-y-4">
+                  {/* Theme Toggle */}
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800"
+                    onClick={toggleTheme}
+                  >
+                    {theme === 'light' ? <Moon className="size-5 mr-2" /> : <Sun className="size-5 mr-2" />}
+                    {theme === 'light' ? 'Dark' : 'Light'} Mode
+                  </Button>
+
+                  {/* Settings Button */}
+                  <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+                    <DialogTrigger asChild>
+                      <Button 
+                        variant="outline" 
+                        className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800"
+                        onClick={() => {
+                          setEditName(currentUser?.name || "");
+                          setEditUsername(currentUser?.username || "");
+                          setEditTag(currentUser?.tag || "");
+                          setEditTagColor(currentUser?.tagColor || "");
+                          setEditEmoji(currentUser?.emoji || "");
+                          setShowEmojiPicker(false);
+                        }}
+                      >
+                        <Settings className="size-5 mr-2" />
+                        Settings
+                      </Button>
+                    </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Edit Profile</DialogTitle>
                   <DialogDescription>Update your name and username</DialogDescription>
                 </DialogHeader>
-                
-                {/* Stats Container */}
-                <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 mb-4">
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Server Statistics</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
-                      <div className="flex items-center justify-center mb-2">
-                        <Users className="size-6 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 text-center">{totalUsers}</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 text-center">Total Users</div>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
-                      <div className="flex items-center justify-center mb-2">
-                        <div className="relative">
-                          <Users className="size-6 text-green-600 dark:text-green-400" />
-                          <div className="absolute -top-0.5 -right-0.5 size-2 bg-green-500 rounded-full animate-pulse"></div>
-                        </div>
-                      </div>
-                      <div className="text-2xl font-bold text-green-600 dark:text-green-400 text-center">{onlineUsers}</div>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 text-center">Online Now</div>
-                    </div>
-                  </div>
-                </div>
 
                 <form onSubmit={handleUpdateProfile}>
                   <div className="space-y-4">
@@ -1342,6 +1574,11 @@ export default function ChatMain() {
                       {currentUser?.moderator && (
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                           Leave empty to use default "MOD" tag
+                        </p>
+                      )}
+                      {currentUser?.tag === 'SCAM' && (
+                        <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                          You can edit or clear your SCAM tag here
                         </p>
                       )}
                     </div>
@@ -1445,612 +1682,663 @@ export default function ChatMain() {
                 </form>
               </DialogContent>
             </Dialog>
-            <Button variant="ghost" size="icon" onClick={handleLogout}>
-              <LogOut className="size-5" />
-            </Button>
-          </div>
-        </div>
 
-        <Tabs defaultValue="friends" className="flex-1 flex flex-col min-h-0">
-          <TabsList className="w-full grid grid-cols-2 rounded-none border-b dark:border-gray-800 dark:bg-gray-900 flex-shrink-0">
-            <TabsTrigger value="friends" className="dark:data-[state=active]:bg-gray-800 dark:data-[state=active]:text-white">Friends</TabsTrigger>
-            <TabsTrigger value="groups" className="dark:data-[state=active]:bg-gray-800 dark:data-[state=active]:text-white">Groups</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="friends" className="flex-1 mt-0 flex flex-col min-h-0">
-            <div className="p-2 space-y-2 flex-shrink-0">
-              <Dialog open={addFriendOpen} onOpenChange={setAddFriendOpen}>
-                <DialogTrigger asChild>
-                  <Button className="w-full" variant="outline">
-                    <UserPlus className="size-4 mr-2" />
-                    Add Friend
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Friend</DialogTitle>
-                    <DialogDescription>Enter your friend's username</DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={handleAddFriend}>
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="friendEmail">Username</Label>
-                        <Input
-                          id="friendEmail"
-                          type="text"
-                          placeholder="username"
-                          value={friendEmail}
-                          onChange={(e) => setFriendEmail(e.target.value)}
-                          required
-                        />
-                      </div>
+            {/* Create Group Button */}
+            <Dialog open={createGroupOpen} onOpenChange={(open) => {
+              setCreateGroupOpen(open);
+              if (!open) {
+                setGroupEmoji("");
+                setShowCreateGroupEmojiPicker(false);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800">
+                  <Users className="size-5 mr-2" />
+                  Create Group
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="dark:bg-gray-900">
+                <DialogHeader>
+                  <DialogTitle className="dark:text-white">Create Group</DialogTitle>
+                  <DialogDescription>Create a new group chat</DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleCreateGroup}>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="groupName">Group Name</Label>
+                      <Input
+                        id="groupName"
+                        type="text"
+                        placeholder="My Group"
+                        value={groupName}
+                        onChange={(e) => setGroupName(e.target.value)}
+                        required
+                      />
                     </div>
-                    <DialogFooter className="mt-4">
-                      <Button type="submit">Add Friend</Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-
-              <Dialog open={friendRequestsOpen} onOpenChange={setFriendRequestsOpen}>
-                <DialogTrigger asChild>
-                  <Button className="w-full" variant="outline" onClick={() => setFriendRequestsOpen(true)}>
-                    <Bell className="size-4 mr-2" />
-                    Friend Requests
-                    {friendRequests.length > 0 && (
-                      <Badge className="ml-auto" variant="destructive">
-                        {friendRequests.length}
-                      </Badge>
-                    )}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Friend Requests</DialogTitle>
-                    <DialogDescription>
-                      {friendRequests.length === 0 ? "No pending requests" : `${friendRequests.length} pending request${friendRequests.length > 1 ? 's' : ''}`}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <ScrollArea className="max-h-96">
-                    {friendRequests.length === 0 ? (
-                      <div className="text-center text-gray-500 py-8">
-                        No friend requests
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {friendRequests.map((request) => (
-                          <div key={request.requesterId} className="flex items-center gap-3 p-3 border rounded-lg">
-                            <Avatar>
-                              <AvatarFallback className="bg-blue-600 text-white">
-                                {request.requester.emoji ? (
-                                  <span className="text-2xl">{request.requester.emoji}</span>
-                                ) : (
-                                  request.requester.name.charAt(0).toUpperCase()
-                                )}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className="flex-1">
-                              <div className="font-medium">{request.requester.name}</div>
-                              <div className="text-xs text-gray-500">{request.requester.email}</div>
-                            </div>
-                            <div className="flex gap-2">
-                              <Button
-                                size="icon"
-                                variant="default"
-                                onClick={() => handleAcceptFriendRequest(request.requesterId)}
-                              >
-                                <Check className="size-4" />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="destructive"
-                                onClick={() => handleDeclineFriendRequest(request.requesterId)}
-                              >
-                                <X className="size-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </ScrollArea>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <ScrollArea className="flex-1 px-2">
-              {/* News Channel - Small and less noticeable */}
-              <button
-                onClick={() => {
-                  setMessages([]);
-                  setSelectedChat({ type: 'news', id: 'news-channel', name: 'News Channel' });
-                  loadMessages('news', 'news-channel');
-                }}
-                className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 transition mb-3 border-b border-gray-100 ${
-                  selectedChat?.type === 'news' ? 'bg-yellow-50' : ''
-                }`}
-              >
-                <div className="text-xl">📰</div>
-                <div className="flex-1 text-left">
-                  <div className="text-xs font-medium text-gray-600">News Channel</div>
-                </div>
-              </button>
-
-              {friends.length === 0 ? (
-                <div className="text-center text-gray-500 text-sm py-8">
-                  No friends yet. Add some friends to start chatting!
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {friends.map((friend) => (
-                    <div
-                      key={friend.id}
-                      className={w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
-                        selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
-                          ? 'bg-blue-50 dark:bg-blue-900/30'
-                          : ''
-                      }}
-                    >
-                      <button
-                        onClick={() => selectFriendChat(friend)}
-                        className="flex items-center gap-3 flex-1 min-w-0"
-                      >
-                        <Avatar className="flex-shrink-0">
-                          <AvatarFallback className="bg-gray-300 dark:bg-gray-700">
-                            {friend.emoji ? (
-                              <span className="text-2xl">{friend.emoji}</span>
-                            ) : (
-                              friend.name.charAt(0).toUpperCase()
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1 text-left">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-medium dark:text-white truncate">{friend.name}</span>
-                            {friend.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
-                            {(() => {
-                              const badge = renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor);
-                              return badge ? <span className="flex-shrink-0">{badge}</span> : null;
-                            })()}
-                          </div>
-                          <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
-                        </div>
-                      </button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                    <div>
+                      <Label>Group Emoji</Label>
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center gap-2">
+                          <div className="text-4xl">{groupEmoji || "👥"}</div>
                           <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 flex-shrink-0"
-                            onClick={(e) => e.stopPropagation()}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowCreateGroupEmojiPicker(!showCreateGroupEmojiPicker)}
                           >
-                            <MoreVertical className="size-4" />
+                            {showCreateGroupEmojiPicker ? "Hide" : "Choose Emoji"}
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (confirm(Remove ${friend.name} from your friends?)) {
-                                await handleRemoveFriend(friend.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="size-4 mr-2" />
-                            Remove Friend
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="groups" className="flex-1 mt-0 overflow-hidden">
-            <div className="p-2">
-              <Dialog open={createGroupOpen} onOpenChange={(open) => {
-                setCreateGroupOpen(open);
-                if (!open) {
-                  setGroupEmoji("");
-                  setShowCreateGroupEmojiPicker(false);
-                }
-              }}>
-                <DialogTrigger asChild>
-                  <Button className="w-full" variant="outline">
-                    <Plus className="size-4 mr-2" />
-                    Create Group
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create Group</DialogTitle>
-                    <DialogDescription>Create a new group chat</DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={handleCreateGroup}>
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="groupName">Group Name</Label>
-                        <Input
-                          id="groupName"
-                          type="text"
-                          placeholder="My Group"
-                          value={groupName}
-                          onChange={(e) => setGroupName(e.target.value)}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Group Emoji</Label>
-                        <div className="space-y-2 mt-2">
-                          <div className="flex items-center gap-2">
-                            <div className="text-4xl">{groupEmoji || "👥"}</div>
+                          {groupEmoji && (
                             <Button
                               type="button"
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
-                              onClick={() => setShowCreateGroupEmojiPicker(!showCreateGroupEmojiPicker)}
+                              onClick={() => setGroupEmoji("")}
                             >
-                              {showCreateGroupEmojiPicker ? "Hide" : "Choose Emoji"}
+                              Clear
                             </Button>
-                            {groupEmoji && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setGroupEmoji("")}
-                              >
-                                Clear
-                              </Button>
-                            )}
-                          </div>
-                          {showCreateGroupEmojiPicker && (
-                            <ScrollArea className="h-48 border rounded-md p-2">
-                              <div className="grid grid-cols-8 gap-1">
-                                {COMMON_EMOJIS.map((emoji, idx) => (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    className="text-2xl hover:bg-gray-100 rounded p-1 cursor-pointer"
-                                    onClick={() => {
-                                      setGroupEmoji(emoji);
-                                      setShowCreateGroupEmojiPicker(false);
-                                    }}
-                                  >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            </ScrollArea>
                           )}
                         </div>
-                      </div>
-                      <div>
-                        <Label>Add Members</Label>
-                        <ScrollArea className="h-40 border rounded-md p-2 mt-2">
-                          {friends.map((friend) => (
-                            <label
-                              key={friend.id}
-                              className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedFriendsForGroup.includes(friend.id)}
-                                onChange={() => toggleFriendForGroup(friend.id)}
-                                className="rounded"
-                              />
-                              <span>{friend.name}</span>
-                            </label>
-                          ))}
-                        </ScrollArea>
-                      </div>
-                    </div>
-                    <DialogFooter className="mt-4">
-                      <Button type="submit">Create Group</Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            </div>
-
-            <ScrollArea className="flex-1 px-2">
-              {groups.length === 0 ? (
-                <div className="text-center text-gray-500 text-sm py-8">
-                  No groups yet. Create a group to start chatting!
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {groups.map((group) => (
-                    <div
-                      key={group.id}
-                      className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
-                        selectedChat?.id === group.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
-                      }`}
-                    >
-                      <button
-                        onClick={() => selectGroupChat(group)}
-                        className="flex items-center gap-3 flex-1 min-w-0"
-                      >
-                        <Avatar>
-                          <AvatarFallback className="bg-purple-600 text-white">
-                            {group.emoji ? (
-                              <span className="text-2xl">{group.emoji}</span>
-                            ) : (
-                              <Users className="size-5" />
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 text-left min-w-0">
-                          <div className="font-medium dark:text-white truncate">{group.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {group.members.length} members
-                          </div>
-                        </div>
-                      </button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 flex-shrink-0"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingGroup(group);
-                              setEditGroupName(group.name);
-                              setEditGroupEmoji(group.emoji || "");
-                              setShowGroupEmojiPicker(false);
-                            }}
-                          >
-                            <Edit className="size-4 mr-2" />
-                            Edit Group
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setAddMembersGroup(group);
-                              setSelectedMembersToAdd([]);
-                            }}
-                          >
-                            <UserPlus className="size-4 mr-2" />
-                            Add Members
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (confirm(`Delete group "${group.name}"? This cannot be undone.`)) {
-                                try {
-                                  const response = await fetch(
-                                    `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${group.id}`,
-                                    {
-                                      method: "DELETE",
-                                      headers: {
-                                        Authorization: `Bearer ${publicAnonKey}`,
-                                        'X-User-Id': userId || '',
-                                      },
-                                    }
-                                  );
-                                  if (!response.ok) {
-                                    toast.error("Failed to delete group");
-                                    return;
-                                  }
-                                  toast.success("Group deleted!");
-                                  if (selectedChat?.id === group.id) {
-                                    setSelectedChat(null);
-                                  }
-                                  loadGroups();
-                                } catch (error) {
-                                  console.error("Delete group error:", error);
-                                  toast.error("Failed to delete group");
-                                }
-                              }
-                            }}
-                          >
-                            <Trash className="size-4 mr-2" />
-                            Delete Group
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </TabsContent>
-        </Tabs>
-      </div>
-
-      {/* Edit Group Dialog */}
-      <Dialog open={!!editingGroup} onOpenChange={(open) => !open && setEditingGroup(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Group</DialogTitle>
-            <DialogDescription>Update group name and emoji</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={async (e) => {
-            e.preventDefault();
-            if (!editingGroup) return;
-            
-            try {
-              const response = await fetch(
-                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${editingGroup.id}`,
-                {
-                  method: "PUT",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${publicAnonKey}`,
-                    'X-User-Id': userId || '',
-                  },
-                  body: JSON.stringify({ name: editGroupName, emoji: editGroupEmoji }),
-                }
-              );
-
-              const data = await response.json();
-              if (!response.ok) {
-                toast.error(data.error || "Failed to update group");
-                return;
-              }
-
-              toast.success("Group updated!");
-              setEditingGroup(null);
-              loadGroups();
-              
-              // Update selected chat if this group is currently selected
-              if (selectedChat?.id === editingGroup.id) {
-                setSelectedChat({ ...selectedChat, name: editGroupName });
-              }
-            } catch (error) {
-              console.error("Update group error:", error);
-              toast.error("Failed to update group");
-            }
-          }}>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="editGroupName">Group Name</Label>
-                <Input
-                  id="editGroupName"
-                  type="text"
-                  placeholder="Group name"
-                  value={editGroupName}
-                  onChange={(e) => setEditGroupName(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Group Emoji</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="text-4xl">{editGroupEmoji || "👥"}</div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowGroupEmojiPicker(!showGroupEmojiPicker)}
-                    >
-                      {showGroupEmojiPicker ? "Hide" : "Choose Emoji"}
-                    </Button>
-                    {editGroupEmoji && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setEditGroupEmoji("")}
-                      >
-                        Clear
-                      </Button>
-                    )}
-                  </div>
-                  {showGroupEmojiPicker && (
-                    <ScrollArea className="h-48 border rounded-md p-2">
-                      <div className="grid grid-cols-8 gap-1">
-                        {COMMON_EMOJIS.map((emoji, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            className="text-2xl hover:bg-gray-100 rounded p-1 cursor-pointer"
-                            onClick={() => {
-                              setEditGroupEmoji(emoji);
-                              setShowGroupEmojiPicker(false);
-                            }}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </div>
-              </div>
-            </div>
-            <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setEditingGroup(null)}>
-                Cancel
-              </Button>
-              <Button type="submit">Save Changes</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Members Dialog */}
-      <Dialog open={!!addMembersGroup} onOpenChange={(open) => !open && setAddMembersGroup(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add Members to {addMembersGroup?.name}</DialogTitle>
-            <DialogDescription>Select friends to add to this group</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAddMembers}>
-            <div className="space-y-4">
-              <ScrollArea className="h-64 border rounded-md p-2">
-                {friends.filter(f => !addMembersGroup?.members.includes(f.id)).length === 0 ? (
-                  <div className="text-center text-gray-500 text-sm py-4">
-                    All your friends are already in this group
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {friends
-                      .filter(f => !addMembersGroup?.members.includes(f.id))
-                      .map((friend) => (
-                        <div
-                          key={friend.id}
-                          className="flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
-                          onClick={() => {
-                            if (selectedMembersToAdd.includes(friend.id)) {
-                              setSelectedMembersToAdd(selectedMembersToAdd.filter(id => id !== friend.id));
-                            } else {
-                              setSelectedMembersToAdd([...selectedMembersToAdd, friend.id]);
-                            }
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedMembersToAdd.includes(friend.id)}
-                            onChange={() => {}}
-                            className="cursor-pointer"
-                          />
-                          <Avatar className="h-8 w-8">
-                            <AvatarFallback className="bg-gray-300 dark:bg-gray-700 text-sm">
-                              {friend.emoji ? (
-                                <span className="text-lg">{friend.emoji}</span>
-                              ) : (
-                                friend.name.charAt(0).toUpperCase()
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-medium dark:text-white">{friend.name}</span>
-                              {friend.verified && renderVerifiedBadge()}
-                              {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
+                        {showCreateGroupEmojiPicker && (
+                          <ScrollArea className="h-48 border rounded-lg p-2">
+                            <div className="grid grid-cols-8 gap-1">
+                              {COMMON_EMOJIS.map((emoji, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-800 rounded p-1 cursor-pointer"
+                                  onClick={() => {
+                                    setGroupEmoji(emoji);
+                                    setShowCreateGroupEmojiPicker(false);
+                                  }}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
                             </div>
-                            <div className="text-xs text-gray-500">@{friend.username}</div>
+                          </ScrollArea>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Select Members</Label>
+                      <ScrollArea className="h-48 border rounded-lg p-2 mt-2">
+                        {friends.length === 0 ? (
+                          <div className="text-center text-gray-500 text-sm py-4">
+                            No friends to add
                           </div>
-                        </div>
-                      ))}
+                        ) : (
+                          <div className="space-y-2">
+                            {friends.map((friend) => (
+                              <label key={friend.id} className="flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedFriendsForGroup.includes(friend.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedFriendsForGroup([...selectedFriendsForGroup, friend.id]);
+                                    } else {
+                                      setSelectedFriendsForGroup(selectedFriendsForGroup.filter(id => id !== friend.id));
+                                    }
+                                  }}
+                                  className="rounded"
+                                />
+                                <span className="dark:text-white">{friend.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </div>
                   </div>
+                  <DialogFooter className="mt-4">
+                    <Button type="submit">Create Group</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* Create Channel Button */}
+            <Dialog open={createChannelOpen} onOpenChange={(open) => {
+              setCreateChannelOpen(open);
+              if (!open) {
+                setChannelEmoji("");
+                setShowCreateChannelEmojiPicker(false);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800">
+                  <Hash className="size-5 mr-2" />
+                  Create Channel
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="dark:bg-gray-900">
+                <DialogHeader>
+                  <DialogTitle className="dark:text-white">Create Channel</DialogTitle>
+                  <DialogDescription>Create a new public channel</DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleCreateChannel}>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="channelName">Channel Name</Label>
+                      <Input
+                        id="channelName"
+                        type="text"
+                        placeholder="My Channel"
+                        value={channelName}
+                        onChange={(e) => setChannelName(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="channelUsername">Channel Username</Label>
+                      <Input
+                        id="channelUsername"
+                        type="text"
+                        placeholder="mychannel"
+                        value={channelUsername}
+                        onChange={(e) => setChannelUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                        required
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Users can find your channel by this username
+                      </p>
+                    </div>
+                    <div>
+                      <Label>Channel Emoji</Label>
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center gap-2">
+                          <div className="text-4xl">{channelEmoji || "📢"}</div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowCreateChannelEmojiPicker(!showCreateChannelEmojiPicker)}
+                          >
+                            {showCreateChannelEmojiPicker ? "Hide" : "Choose Emoji"}
+                          </Button>
+                          {channelEmoji && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setChannelEmoji("")}
+                            >
+                              Clear
+                            </Button>
+                          )}
+                        </div>
+                        {showCreateChannelEmojiPicker && (
+                          <ScrollArea className="h-48 border rounded-lg p-2">
+                            <div className="grid grid-cols-8 gap-1">
+                              {COMMON_EMOJIS.map((emoji, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-800 rounded p-1 cursor-pointer"
+                                  onClick={() => {
+                                    setChannelEmoji(emoji);
+                                    setShowCreateChannelEmojiPicker(false);
+                                  }}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <DialogFooter className="mt-4">
+                    <Button type="submit">Create Channel</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* Logout Button */}
+            <Button variant="outline" className="w-full justify-start text-red-600 dark:border-gray-700 dark:hover:bg-gray-800" onClick={handleLogout}>
+              <LogOut className="size-5 mr-2" />
+              Logout
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <div className="flex items-center gap-3">
+        <Avatar>
+          <AvatarFallback className="bg-blue-600 text-white">
+            {currentUser?.emoji ? (
+              <span className="text-2xl">{currentUser.emoji}</span>
+            ) : (
+              currentUser?.name?.charAt(0).toUpperCase()
+            )}
+          </AvatarFallback>
+        </Avatar>
+        <div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold dark:text-white">{currentUser?.name}</span>
+            {currentUser?.verified && renderVerifiedBadge()}
+            {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor)}
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">@{currentUser?.username}</div>
+        </div>
+      </div>
+    </div>
+    <div className="flex items-center gap-1">
+      {currentUser?.email === 'mikhail02323@gmail.com' && (
+        <Button 
+          variant="ghost" 
+          size="icon"
+          onClick={handleAdminPanelOpen}
+          title="Admin Panel"
+        >
+          <Shield className="size-5 text-red-600" />
+        </Button>
+      )}
+      {currentUser?.moderator && (
+        <Button 
+          variant="ghost" 
+          size="icon"
+          onClick={() => setModeratorPanelOpen(true)}
+          title="Moderator Panel"
+        >
+          <Shield className="size-5 text-yellow-600" />
+        </Button>
+      )}
+    </div>
+  </div>
+
+  <div className="flex-1 flex flex-col min-h-0">
+    {/* Search Section */}
+    <div className="p-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-gray-400" />
+        <Input
+          type="text"
+          placeholder="Search users and channels..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              handleSearch();
+            }
+          }}
+          className="pl-10 dark:bg-gray-800 dark:border-gray-700"
+        />
+      </div>
+      {searchResults.length > 0 && (
+        <ScrollArea className="mt-2 max-h-64 border rounded-lg dark:border-gray-700">
+          <div className="p-2 space-y-1">
+            {searchResults.map((result: any) => (
+              <div key={result.id} className="flex items-center gap-3 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
+                <Avatar className="flex-shrink-0">
+                  <AvatarFallback className={result.username ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'}>
+                    {result.emoji ? (
+                      <span className="text-xl">{result.emoji}</span>
+                    ) : result.username ? (
+                      <Hash className="size-4" />
+                    ) : (
+                      result.name?.charAt(0).toUpperCase()
+                    )}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium dark:text-white truncate">{result.name}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    @{result.username || result.email?.split('@')[0]}
+                  </div>
+                </div>
+                {result.channelUsername ? (
+                  <Button size="sm" onClick={() => handleJoinChannel(result.id)}>
+                    Join
+                  </Button>
+                ) : (
+                  <Button size="sm" onClick={() => handleAddFriendFromSearch(result.id)}>
+                    <UserPlus className="size-4" />
+                  </Button>
                 )}
-              </ScrollArea>
-            </div>
-            <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setAddMembersGroup(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={selectedMembersToAdd.length === 0}>
-                Add {selectedMembersToAdd.length > 0 ? `(${selectedMembersToAdd.length})` : ''}
-              </Button>
-            </DialogFooter>
-          </form>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
+
+    <div className="p-2 space-y-2 flex-shrink-0">
+      <Dialog open={friendRequestsOpen} onOpenChange={setFriendRequestsOpen}>
+        <DialogTrigger asChild>
+          <Button className="w-full" variant="outline" onClick={() => setFriendRequestsOpen(true)}>
+            <Bell className="size-4 mr-2" />
+            Friend Requests
+            {friendRequests.length > 0 && (
+              <Badge className="ml-auto" variant="destructive">
+                {friendRequests.length}
+              </Badge>
+            )}
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Friend Requests</DialogTitle>
+            <DialogDescription>
+              {friendRequests.length === 0 ? "No pending requests" : `${friendRequests.length} pending request${friendRequests.length > 1 ? 's' : ''}`}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-96">
+            {friendRequests.length === 0 ? (
+              <div className="text-center text-gray-500 py-8">
+                No friend requests
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {friendRequests.map((request) => (
+                  <div key={request.requesterId} className="flex items-center gap-3 p-3 border rounded-lg">
+                    <Avatar>
+                      <AvatarFallback className="bg-blue-600 text-white">
+                        {request.requester.emoji ? (
+                          <span className="text-2xl">{request.requester.emoji}</span>
+                        ) : (
+                          request.requester.name.charAt(0).toUpperCase()
+                        )}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1">
+                      <div className="font-medium">{request.requester.name}</div>
+                      <div className="text-xs text-gray-500">{request.requester.email}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="icon"
+                        variant="default"
+                        onClick={() => handleAcceptFriendRequest(request.requesterId)}
+                      >
+                        <Check className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="destructive"
+                        onClick={() => handleDeclineFriendRequest(request.requesterId)}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
         </DialogContent>
       </Dialog>
+    </div>
+
+    <ScrollArea className="flex-1 px-2">
+      {/* News Channel - Small and less noticeable */}
+      <button
+        onClick={() => {
+          setMessages([]);
+          setSelectedChat({ type: 'news', id: 'news-channel', name: 'News Channel' });
+          loadMessages('news', 'news-channel');
+        }}
+        className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 transition mb-3 border-b border-gray-100 ${
+          selectedChat?.type === 'news' ? 'bg-yellow-50' : ''
+        }`}
+      >
+        <div className="text-xl">📰</div>
+        <div className="flex-1 text-left">
+          <div className="text-xs font-medium text-gray-600">News Channel</div>
+        </div>
+      </button>
+
+      {friends.length === 0 ? (
+        <div className="text-center text-gray-500 text-sm py-8">
+          No friends yet. Add some friends to start chatting!
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {friends.map((friend) => (
+            <div
+              key={friend.id}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
+                selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
+                  ? 'bg-blue-50 dark:bg-blue-900/30'
+                  : ''
+              }`}
+            >
+              <button
+                onClick={() => selectFriendChat(friend)}
+                className="flex items-center gap-3 flex-1 min-w-0"
+              >
+                <Avatar className="flex-shrink-0">
+                  <AvatarFallback className="bg-gray-300 dark:bg-gray-700">
+                    {friend.emoji ? (
+                      <span className="text-2xl">{friend.emoji}</span>
+                    ) : (
+                      friend.name.charAt(0).toUpperCase()
+                    )}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1 text-left">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-medium dark:text-white truncate">{friend.name}</span>
+                    {friend.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
+                    {(() => {
+                      const badge = renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor);
+                      return badge ? <span className="flex-shrink-0">{badge}</span> : null;
+                    })()}
+                  </div>
+                  <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
+                </div>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 flex-shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-red-600"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (confirm(`Remove ${friend.name} from your friends?`)) {
+                        await handleRemoveFriend(friend.id);
+                      }
+                    }}
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    Remove Friend
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Groups Section */}
+      <div className="mt-4 mb-2 px-2">
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Groups</h3>
+      </div>
+      {groups.length === 0 ? (
+        <div className="text-center text-gray-500 text-sm py-4 px-2">
+          No groups yet
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {groups.map((group) => (
+            <div
+              key={group.id}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
+                selectedChat?.id === group.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+              }`}
+            >
+              <button
+                onClick={() => selectGroupChat(group)}
+                className="flex items-center gap-3 flex-1 min-w-0"
+              >
+                <Avatar className="flex-shrink-0">
+                  <AvatarFallback className="bg-purple-600 text-white">
+                    {group.emoji ? (
+                      <span className="text-2xl">{group.emoji}</span>
+                    ) : (
+                      <Users className="size-4" />
+                    )}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1 text-left">
+                  <span className="font-medium dark:text-white truncate block">{group.name}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{group.members?.length || 0} members</span>
+                </div>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 flex-shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingGroup(group);
+                      setEditGroupName(group.name);
+                      setEditGroupEmoji(group.emoji || "");
+                    }}
+                  >
+                    <Edit className="size-4 mr-2" />
+                    Edit Group
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddMembersGroup(group);
+                    }}
+                  >
+                    <UserPlus className="size-4 mr-2" />
+                    Add Members
+                  </DropdownMenuItem>
+                  {group.creatorId === userId && (
+                    <DropdownMenuItem
+                      className="text-red-600"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete "${group.name}"? This will delete all messages.`)) {
+                          await handleDeleteGroup(group.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4 mr-2" />
+                      Delete Group
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Channels Section */}
+      <div className="mt-4 mb-2 px-2">
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Channels</h3>
+      </div>
+      {channels.length === 0 ? (
+        <div className="text-center text-gray-500 text-sm py-4 px-2">
+          No channels yet
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {channels.map((channel) => (
+            <div
+              key={channel.id}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
+                selectedChat?.id === channel.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+              }`}
+            >
+              <button
+                onClick={() => selectChannelChat(channel)}
+                className="flex items-center gap-3 flex-1 min-w-0"
+              >
+                <Avatar className="flex-shrink-0">
+                  <AvatarFallback className="bg-green-600 text-white">
+                    {channel.emoji ? (
+                      <span className="text-2xl">{channel.emoji}</span>
+                    ) : (
+                      <Hash className="size-4" />
+                    )}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1 text-left">
+                  <span className="font-medium dark:text-white truncate block">{channel.name}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">@{channel.username}</span>
+                </div>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 flex-shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {channel.creatorId === userId && (
+                    <>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingChannel(channel);
+                          setEditChannelName(channel.name);
+                          setEditChannelUsername(channel.username);
+                          setEditChannelEmoji(channel.emoji || "");
+                        }}
+                      >
+                        <Edit className="size-4 mr-2" />
+                        Edit Channel
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-red-600"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm(`Delete "${channel.name}"? This will delete all messages.`)) {
+                            await handleDeleteChannel(channel.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-4 mr-2" />
+                        Delete Channel
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {channel.creatorId !== userId && (
+                    <DropdownMenuItem disabled className="text-gray-500">
+                      Only creator can edit
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ))}
+        </div>
+      )}
+    </ScrollArea>
+  </div>
+</div>
 
       {/* Chat Area - Full width on mobile when chat is selected */}
       <div className={`flex-1 flex flex-col ${!selectedChat ? 'hidden md:flex' : 'flex w-full'}`}>
@@ -2181,12 +2469,22 @@ export default function ChatMain() {
 
       {/* Admin Panel */}
       <Dialog open={adminPanelOpen} onOpenChange={setAdminPanelOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Admin Panel</DialogTitle>
-            <DialogDescription>Manage users and reset passwords</DialogDescription>
+            <DialogDescription>Manage users, view stats, and fun global functions</DialogDescription>
           </DialogHeader>
-          <ScrollArea className="max-h-96">
+          
+          <Tabs value={adminTab} onValueChange={(value) => setAdminTab(value as 'users' | 'settings' | 'troll')}>
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="users">Users</TabsTrigger>
+              <TabsTrigger value="settings">Settings</TabsTrigger>
+              <TabsTrigger value="troll">Troll Zone</TabsTrigger>
+            </TabsList>
+            
+            {/* Users Tab */}
+            <TabsContent value="users">
+              <ScrollArea className="max-h-96">
             <div className="space-y-3 pr-4">
               {allUsers.length === 0 ? (
                 <div className="text-center text-gray-500 py-8">
@@ -2409,6 +2707,683 @@ export default function ChatMain() {
               )}
             </div>
           </ScrollArea>
+            </TabsContent>
+            
+            {/* Settings Tab */}
+            <TabsContent value="settings">
+              <div className="space-y-4">
+                {/* Stats Container */}
+                <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Server Statistics</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
+                      <div className="flex items-center justify-center mb-2">
+                        <Users className="size-6 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 text-center">{totalUsers}</div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 text-center">Total Users</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
+                      <div className="flex items-center justify-center mb-2">
+                        <div className="relative">
+                          <Users className="size-6 text-green-600 dark:text-green-400" />
+                          <div className="absolute -top-0.5 -right-0.5 size-2 bg-green-500 rounded-full animate-pulse"></div>
+                        </div>
+                      </div>
+                      <div className="text-2xl font-bold text-green-600 dark:text-green-400 text-center">{onlineUsers}</div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 text-center">Online Now</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+            
+            {/* Troll Zone Tab */}
+            <TabsContent value="troll">
+              <div className="space-y-3">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Fun global functions that affect all active users! 🎉
+                </p>
+                
+                <Button
+                  className="w-full"
+                  onClick={async () => {
+                    const message = prompt("Enter broadcast message:");
+                    if (message) {
+                      try {
+                        localStorage.setItem('global-troll-action', JSON.stringify({
+                          action: 'broadcast',
+                          message,
+                          timestamp: Date.now()
+                        }));
+                        toast.success("Broadcast sent to all users!");
+                      } catch (error) {
+                        console.error("Broadcast error:", error);
+                        toast.error("Failed to send broadcast");
+                      }
+                    }
+                  }}
+                >
+                  📢 Global Broadcast
+                </Button>
+                
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      localStorage.setItem('global-troll-action', JSON.stringify({
+                        action: 'shake',
+                        timestamp: Date.now()
+                      }));
+                      toast.success("Screen shake activated for all users!");
+                    } catch (error) {
+                      console.error("Shake error:", error);
+                      toast.error("Failed to activate shake");
+                    }
+                  }}
+                >
+                  📳 Screen Shake
+                </Button>
+                
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      localStorage.setItem('global-troll-action', JSON.stringify({
+                        action: 'confetti',
+                        timestamp: Date.now()
+                      }));
+                      toast.success("Confetti explosion activated!");
+                    } catch (error) {
+                      console.error("Confetti error:", error);
+                      toast.error("Failed to activate confetti");
+                    }
+                  }}
+                >
+                  🎉 Confetti Explosion
+                </Button>
+                
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      localStorage.setItem('global-troll-action', JSON.stringify({
+                        action: 'fakeUpdate',
+                        timestamp: Date.now()
+                      }));
+                      toast.success("Fake update alert sent!");
+                    } catch (error) {
+                      console.error("Fake update error:", error);
+                      toast.error("Failed to send fake update");
+                    }
+                  }}
+                >
+                  ⚠️ Fake Update Alert
+                </Button>
+                
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      localStorage.setItem('global-troll-action', JSON.stringify({
+                        action: 'emojiRain',
+                        timestamp: Date.now()
+                      }));
+                      toast.success("Emoji rain activated!");
+                    } catch (error) {
+                      console.error("Emoji rain error:", error);
+                      toast.error("Failed to activate emoji rain");
+                    }
+                  }}
+                >
+                  😄 Emoji Rain
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      {/* Moderator Panel */}
+      <Dialog open={moderatorPanelOpen} onOpenChange={setModeratorPanelOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Moderator Panel</DialogTitle>
+            <DialogDescription>Search and manage users</DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {/* Search */}
+            <div>
+              <Label htmlFor="modSearch">Search Users</Label>
+              <Input
+                id="modSearch"
+                placeholder="Search by name or username..."
+                value={moderatorSearchQuery}
+                onChange={async (e) => {
+                  const query = e.target.value;
+                  setModeratorSearchQuery(query);
+                  
+                  if (query.trim().length >= 2) {
+                    // Search in allUsers
+                    const results = allUsers.filter(u => 
+                      u.name?.toLowerCase().includes(query.toLowerCase()) ||
+                      u.username?.toLowerCase().includes(query.toLowerCase())
+                    );
+                    setModeratorSearchResults(results);
+                  } else {
+                    setModeratorSearchResults([]);
+                  }
+                }}
+              />
+            </div>
+            
+            {/* Search Results */}
+            {moderatorSearchResults.length > 0 && (
+              <ScrollArea className="max-h-64 border rounded-lg p-2">
+                <div className="space-y-2">
+                  {moderatorSearchResults.map((user) => (
+                    <div
+                      key={user.id}
+                      className="p-3 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                      onClick={() => {
+                        setSelectedUserForMod(user);
+                        setModeratorSearchQuery("");
+                        setModeratorSearchResults([]);
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Avatar>
+                          <AvatarFallback className="bg-blue-600 text-white">
+                            {user.emoji ? (
+                              <span className="text-2xl">{user.emoji}</span>
+                            ) : (
+                              user.name.charAt(0).toUpperCase()
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <div className="font-medium">{user.name}</div>
+                          <div className="text-xs text-gray-500">@{user.username}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+            
+            {/* Selected User Actions */}
+            {selectedUserForMod && (
+              <div className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-3 mb-4">
+                  <Avatar>
+                    <AvatarFallback className="bg-blue-600 text-white">
+                      {selectedUserForMod.emoji ? (
+                        <span className="text-2xl">{selectedUserForMod.emoji}</span>
+                      ) : (
+                        selectedUserForMod.name.charAt(0).toUpperCase()
+                      )}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <div className="font-medium">{selectedUserForMod.name}</div>
+                    <div className="text-xs text-gray-500">@{selectedUserForMod.username}</div>
+                    <div className="text-xs text-gray-400">{selectedUserForMod.email}</div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedUserForMod(null)}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+                
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    const newPw = prompt(`Enter new password for ${selectedUserForMod.name}:`);
+                    if (newPw) {
+                      handleChangePassword(selectedUserForMod.id, newPw);
+                    }
+                  }}
+                >
+                  Change Password
+                </Button>
+                
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="w-full"
+                  onClick={async () => {
+                    if (confirm(`Mark ${selectedUserForMod.name}'s password as compromised?`)) {
+                      try {
+                        const response = await fetch(
+                          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/password-compromised`,
+                          {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              Authorization: `Bearer ${publicAnonKey}`,
+                              'X-User-Id': userId || '',
+                            },
+                            body: JSON.stringify({ compromised: true }),
+                          }
+                        );
+                        const data = await response.json();
+                        if (!response.ok) {
+                          toast.error(data.error || "Failed to mark password as compromised");
+                          return;
+                        }
+                        toast.success(`${selectedUserForMod.name}'s password marked as compromised!`);
+                      } catch (error) {
+                        console.error("Mark password compromised error:", error);
+                        toast.error("Failed to mark password as compromised");
+                      }
+                    }
+                  }}
+                >
+                  Mark Password as Compromised
+                </Button>
+                
+                {selectedUserForMod.tag !== 'SCAM' ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="w-full bg-red-600 hover:bg-red-700"
+                    onClick={async () => {
+                      if (confirm(`Mark ${selectedUserForMod.name} as SCAM?`)) {
+                        try {
+                          const response = await fetch(
+                            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/tag`,
+                            {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${publicAnonKey}`,
+                                'X-User-Id': userId || '',
+                              },
+                              body: JSON.stringify({ tag: 'SCAM', tagColor: '#dc2626' }),
+                            }
+                          );
+                          const data = await response.json();
+                          if (!response.ok) {
+                            toast.error(data.error || "Failed to mark as scam");
+                            return;
+                          }
+                          toast.success(`${selectedUserForMod.name} marked as SCAM!`);
+                          setSelectedUserForMod(null);
+                        } catch (error) {
+                          console.error("Mark as scam error:", error);
+                          toast.error("Failed to mark as scam");
+                        }
+                      }
+                    }}
+                  >
+                    ⚠️ Mark as SCAM
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600"
+                    onClick={async () => {
+                      if (confirm(`Remove SCAM tag from ${selectedUserForMod.name}?`)) {
+                        try {
+                          const response = await fetch(
+                            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/tag`,
+                            {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${publicAnonKey}`,
+                                'X-User-Id': userId || '',
+                              },
+                              body: JSON.stringify({ tag: '', tagColor: '' }),
+                            }
+                          );
+                          const data = await response.json();
+                          if (!response.ok) {
+                            toast.error(data.error || "Failed to remove SCAM tag");
+                            return;
+                          }
+                          toast.success(`SCAM tag removed from ${selectedUserForMod.name}!`);
+                          setSelectedUserForMod(null);
+                        } catch (error) {
+                          console.error("Remove SCAM tag error:", error);
+                          toast.error("Failed to remove SCAM tag");
+                        }
+                      }
+                    }}
+                  >
+                    ✓ Remove SCAM Tag
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Group Dialog */}
+      <Dialog open={!!editingGroup} onOpenChange={(open) => !open && setEditingGroup(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Group</DialogTitle>
+            <DialogDescription>Update group name and emoji</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            if (!editingGroup) return;
+            
+            try {
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${editingGroup.id}`,
+                {
+                  method: "PUT",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    'X-User-Id': userId || '',
+                  },
+                  body: JSON.stringify({ name: editGroupName, emoji: editGroupEmoji }),
+                }
+              );
+
+              const data = await response.json();
+              if (!response.ok) {
+                toast.error(data.error || "Failed to update group");
+                return;
+              }
+
+              toast.success("Group updated!");
+              setEditingGroup(null);
+              loadGroups();
+              
+              // Update selected chat if this group is currently selected
+              if (selectedChat?.id === editingGroup.id) {
+                setSelectedChat({ ...selectedChat, name: editGroupName });
+              }
+            } catch (error) {
+              console.error("Update group error:", error);
+              toast.error("Failed to update group");
+            }
+          }}>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="editGroupName">Group Name</Label>
+                <Input
+                  id="editGroupName"
+                  type="text"
+                  placeholder="Group name"
+                  value={editGroupName}
+                  onChange={(e) => setEditGroupName(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Group Emoji</Label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-4xl">{editGroupEmoji || "👥"}</div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowGroupEmojiPicker(!showGroupEmojiPicker)}
+                    >
+                      {showGroupEmojiPicker ? "Hide" : "Choose Emoji"}
+                    </Button>
+                    {editGroupEmoji && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditGroupEmoji("")}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  {showGroupEmojiPicker && (
+                    <ScrollArea className="h-48 border rounded-md p-2">
+                      <div className="grid grid-cols-8 gap-1">
+                        {COMMON_EMOJIS.map((emoji, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-900 rounded p-1 cursor-pointer"
+                            onClick={() => {
+                              setEditGroupEmoji(emoji);
+                              setShowGroupEmojiPicker(false);
+                            }}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="outline" onClick={() => setEditingGroup(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save Changes</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Channel Dialog */}
+      <Dialog open={!!editingChannel} onOpenChange={(open) => !open && setEditingChannel(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Channel</DialogTitle>
+            <DialogDescription>Update channel name, username, and emoji</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            if (!editingChannel) return;
+            
+            try {
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${editingChannel.id}`,
+                {
+                  method: "PUT",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    'X-User-Id': userId || '',
+                  },
+                  body: JSON.stringify({ name: editChannelName, username: editChannelUsername, emoji: editChannelEmoji }),
+                }
+              );
+
+              const data = await response.json();
+              if (!response.ok) {
+                toast.error(data.error || "Failed to update channel");
+                return;
+              }
+
+              toast.success("Channel updated!");
+              setEditingChannel(null);
+              setEditChannelName("");
+              setEditChannelUsername("");
+              setEditChannelEmoji("");
+              setShowEditChannelEmojiPicker(false);
+              loadChannels();
+              
+              // Update selected chat if this channel is currently selected
+              if (selectedChat?.id === editingChannel.id) {
+                setSelectedChat({ ...selectedChat, name: editChannelName });
+              }
+            } catch (error) {
+              console.error("Update channel error:", error);
+              toast.error("Failed to update channel");
+            }
+          }}>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="editChannelName">Channel Name</Label>
+                <Input
+                  id="editChannelName"
+                  type="text"
+                  placeholder="Channel name"
+                  value={editChannelName}
+                  onChange={(e) => setEditChannelName(e.target.value)}
+                  required
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="editChannelUsername">Channel Username</Label>
+                <Input
+                  id="editChannelUsername"
+                  type="text"
+                  placeholder="channelname"
+                  value={editChannelUsername}
+                  onChange={(e) => setEditChannelUsername(e.target.value)}
+                  required
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Only English letters, numbers, underscores (_) and dots (.)
+                </p>
+              </div>
+
+              <div>
+                <Label>Channel Emoji</Label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="text-4xl">{editChannelEmoji || "#"}</div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowEditChannelEmojiPicker(!showEditChannelEmojiPicker)}
+                    >
+                      {showEditChannelEmojiPicker ? "Hide" : "Choose Emoji"}
+                    </Button>
+                    {editChannelEmoji && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditChannelEmoji("")}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  {showEditChannelEmojiPicker && (
+                    <ScrollArea className="h-48 border rounded-lg p-2">
+                      <div className="grid grid-cols-8 gap-1">
+                        {COMMON_EMOJIS.map((emoji, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-900 rounded p-1 cursor-pointer"
+                            onClick={() => {
+                              setEditChannelEmoji(emoji);
+                              setShowEditChannelEmojiPicker(false);
+                            }}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="outline" onClick={() => setEditingChannel(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save Changes</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Members Dialog */}
+      <Dialog open={!!addMembersGroup} onOpenChange={(open) => !open && setAddMembersGroup(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Members to {addMembersGroup?.name}</DialogTitle>
+            <DialogDescription>Select friends to add to this group</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddMembers}>
+            <div className="space-y-4">
+              <ScrollArea className="h-64 border rounded-md p-2">
+                {friends.filter(f => !addMembersGroup?.members.includes(f.id)).length === 0 ? (
+                  <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
+                    All your friends are already in this group
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {friends
+                      .filter(f => !addMembersGroup?.members.includes(f.id))
+                      .map((friend) => (
+                        <div
+                          key={friend.id}
+                          className="flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                          onClick={() => {
+                            if (selectedMembersToAdd.includes(friend.id)) {
+                              setSelectedMembersToAdd(selectedMembersToAdd.filter(id => id !== friend.id));
+                            } else {
+                              setSelectedMembersToAdd([...selectedMembersToAdd, friend.id]);
+                            }
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedMembersToAdd.includes(friend.id)}
+                            onChange={() => {}}
+                            className="cursor-pointer"
+                          />
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="bg-gray-300 dark:bg-gray-700 text-sm">
+                              {friend.emoji ? (
+                                <span className="text-lg">{friend.emoji}</span>
+                              ) : (
+                                friend.name.charAt(0).toUpperCase()
+                              )}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium dark:text-white">{friend.name}</span>
+                              {friend.verified && renderVerifiedBadge()}
+                              {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
+                            </div>
+                            <div className="text-xs text-gray-500">@{friend.username}</div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button type="button" variant="outline" onClick={() => setAddMembersGroup(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={selectedMembersToAdd.length === 0}>
+                Add {selectedMembersToAdd.length > 0 ? `(${selectedMembersToAdd.length})` : ''}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

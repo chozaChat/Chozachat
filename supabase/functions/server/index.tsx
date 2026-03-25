@@ -39,6 +39,43 @@ function getUserIdFromRequest(c: any): string | null {
   return null;
 }
 
+// Retry wrapper for database operations to handle connection resets
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  delayMs: number = 100
+): Promise<T> {
+  let lastError: any;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      lastError = error;
+      const errorMessage = error?.message || String(error);
+      
+      // Check if it's a connection reset or timeout error
+      const isRetryable = 
+        errorMessage.includes('connection reset') ||
+        errorMessage.includes('connection error') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('ECONNRESET');
+      
+      if (isRetryable && attempt < maxRetries) {
+        console.log(`Retry attempt ${attempt}/${maxRetries} after error:`, errorMessage);
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        continue;
+      }
+      
+      // If not retryable or max retries reached, throw
+      throw error;
+    }
+  }
+  
+  throw lastError;
+}
+
 // Health check endpoint
 app.get("/make-server-a1c86d03/health", (c) => {
   return c.json({ status: "ok", version: "2024-03-19-v9", timestamp: new Date().toISOString() });
@@ -56,6 +93,13 @@ app.post("/make-server-a1c86d03/signup", async (c) => {
 
     if (!email || !password || !name || !username) {
       return c.json({ error: "Missing required fields" }, 400);
+    }
+
+    // Validate username format - only English letters, numbers, underscores, and dots
+    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
+    if (!usernameRegex.test(username)) {
+      console.log("Invalid username format:", username);
+      return c.json({ error: "Username can only contain English letters, numbers, underscores (_) and dots (.)" }, 400);
     }
 
     // Check if email already exists
@@ -232,6 +276,12 @@ app.post("/make-server-a1c86d03/user/update", async (c) => {
 
     if (!name || !username) {
       return c.json({ error: 'Name and username are required' }, 400);
+    }
+
+    // Validate username format - only English letters, numbers, underscores, and dots
+    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
+    if (!usernameRegex.test(username)) {
+      return c.json({ error: 'Username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
     }
 
     // Check if username is already taken by another user
@@ -787,6 +837,267 @@ app.delete("/make-server-a1c86d03/groups/:groupId", async (c) => {
   } catch (error) {
     console.error('Delete group error:', error);
     return c.json({ error: 'Failed to delete group' }, 500);
+  }
+});
+
+// Create channel
+app.post("/make-server-a1c86d03/channels", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const { name, username, emoji } = await c.req.json();
+
+    if (!name || !username) {
+      return c.json({ error: 'Channel name and username are required' }, 400);
+    }
+
+    // Validate channel username format - only English letters, numbers, underscores, and dots
+    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
+    if (!usernameRegex.test(username)) {
+      return c.json({ error: 'Channel username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
+    }
+
+    // Check if channel username already exists
+    const allChannels = await kv.getByPrefix('channel:');
+    const usernameExists = allChannels.some((ch: any) => ch.username?.toLowerCase() === username.toLowerCase());
+
+    if (usernameExists) {
+      return c.json({ error: 'Channel username already taken' }, 400);
+    }
+
+    const channelId = crypto.randomUUID();
+
+    await kv.set(`channel:${channelId}`, {
+      id: channelId,
+      name,
+      username,
+      creatorId: userId,
+      members: [userId],
+      emoji: emoji || undefined,
+      createdAt: new Date().toISOString()
+    });
+
+    return c.json({ 
+      success: true,
+      channel: {
+        id: channelId,
+        name,
+        username,
+        creatorId: userId,
+        members: [userId],
+        emoji: emoji || undefined
+      }
+    });
+  } catch (error) {
+    console.error('Create channel error:', error);
+    return c.json({ error: 'Failed to create channel' }, 500);
+  }
+});
+
+// Get all public channels
+app.get("/make-server-a1c86d03/channels", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ code: 401, message: 'No user ID provided' }, 401);
+    }
+
+    const allChannels = await withRetry(() => kv.getByPrefix('channel:'));
+
+    return c.json({ channels: allChannels });
+  } catch (error) {
+    console.error('Get channels error:', error);
+    return c.json({ error: 'Failed to get channels' }, 500);
+  }
+});
+
+// Join channel
+app.post("/make-server-a1c86d03/channels/:channelId/join", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('channelId');
+
+    const channel = await kv.get(`channel:${channelId}`);
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    // Check if user is already a member
+    if (channel.members?.includes(userId)) {
+      return c.json({ error: 'Already a member of this channel' }, 400);
+    }
+
+    // Add user to channel members
+    const updatedChannel = {
+      ...channel,
+      members: [...(channel.members || []), userId],
+    };
+
+    await kv.set(`channel:${channelId}`, updatedChannel);
+
+    return c.json({ success: true, channel: updatedChannel });
+  } catch (error) {
+    console.error('Join channel error:', error);
+    return c.json({ error: 'Failed to join channel' }, 500);
+  }
+});
+
+// Update channel
+app.put("/make-server-a1c86d03/channels/:channelId", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('channelId');
+    const { name, username, emoji } = await c.req.json();
+
+    if (!name || !username) {
+      return c.json({ error: 'Channel name and username are required' }, 400);
+    }
+
+    // Validate channel username format
+    const usernameRegex = /^[a-zA-Z0-9_.]+$/;
+    if (!usernameRegex.test(username)) {
+      return c.json({ error: 'Channel username can only contain English letters, numbers, underscores (_) and dots (.)' }, 400);
+    }
+
+    const channel = await kv.get(`channel:${channelId}`);
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    // Check if user is the creator
+    if (channel.creatorId !== userId) {
+      return c.json({ error: 'Only the channel creator can edit the channel' }, 403);
+    }
+
+    // Check if username is already taken by another channel
+    if (username !== channel.username) {
+      const allChannels = await kv.getByPrefix('channel:');
+      const usernameExists = allChannels.some((ch: any) => 
+        ch.username?.toLowerCase() === username.toLowerCase() && ch.id !== channelId
+      );
+
+      if (usernameExists) {
+        return c.json({ error: 'Channel username already taken' }, 400);
+      }
+    }
+
+    // Update channel
+    const updatedChannel = {
+      ...channel,
+      name,
+      username,
+      emoji: emoji !== undefined ? emoji : channel.emoji,
+    };
+
+    await kv.set(`channel:${channelId}`, updatedChannel);
+
+    return c.json({ success: true, channel: updatedChannel });
+  } catch (error) {
+    console.error('Update channel error:', error);
+    return c.json({ error: 'Failed to update channel' }, 500);
+  }
+});
+
+// Delete channel
+app.delete("/make-server-a1c86d03/channels/:channelId", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('channelId');
+
+    const channel = await kv.get(`channel:${channelId}`);
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    // Only the creator can delete the channel
+    if (channel.creatorId !== userId) {
+      return c.json({ error: 'Only the channel creator can delete the channel' }, 403);
+    }
+
+    // Delete the channel
+    await kv.del(`channel:${channelId}`);
+
+    // Delete all messages in the channel
+    const messages = await kv.getByPrefix(`message:${channelId}:`);
+    for (const message of messages) {
+      await kv.del(`message:${channelId}:${message.id}`);
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Delete channel error:', error);
+    return c.json({ error: 'Failed to delete channel' }, 500);
+  }
+});
+
+// Search users and channels
+app.get("/make-server-a1c86d03/search", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    // Convert query to lowercase and trim for case-insensitive search
+    const query = c.req.query('query')?.toLowerCase().trim() || '';
+    
+    if (!query || query === '') {
+      return c.json({ results: [] });
+    }
+
+    // Search users by name or username (case-insensitive)
+    const allUsers = await kv.getByPrefix('user:');
+    const matchingUsers = allUsers.filter((user: any) => {
+      if (user.id === userId) return false; // Exclude self
+      // Both user fields and query are lowercased for case-insensitive matching
+      const nameMatch = user.name?.toLowerCase().includes(query);
+      const usernameMatch = user.username?.toLowerCase().includes(query);
+      return nameMatch || usernameMatch;
+    }).map((user: any) => ({
+      ...user,
+      type: 'user'
+    }));
+
+    // Search channels by name or username (case-insensitive)
+    const allChannels = await kv.getByPrefix('channel:');
+    const matchingChannels = allChannels.filter((channel: any) => {
+      // Both channel fields and query are lowercased for case-insensitive matching
+      const nameMatch = channel.name?.toLowerCase().includes(query);
+      const usernameMatch = channel.username?.toLowerCase().includes(query);
+      return nameMatch || usernameMatch;
+    }).map((channel: any) => ({
+      ...channel,
+      type: 'channel'
+    }));
+
+    // Combine and return results
+    const results = [...matchingUsers, ...matchingChannels];
+
+    return c.json({ results });
+  } catch (error) {
+    console.error('Search error:', error);
+    return c.json({ error: 'Failed to search' }, 500);
   }
 });
 
