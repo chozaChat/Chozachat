@@ -911,8 +911,13 @@ app.get("/make-server-a1c86d03/channels", async (c) => {
     }
 
     const allChannels = await withRetry(() => kv.getByPrefix('channel:'));
+    
+    // Filter channels to only show channels where user is a member
+    const userChannels = allChannels.filter((channel: any) => 
+      channel.members && channel.members.includes(userId)
+    );
 
-    return c.json({ channels: allChannels });
+    return c.json({ channels: userChannels });
   } catch (error) {
     console.error('Get channels error:', error);
     return c.json({ error: 'Failed to get channels' }, 500);
@@ -952,6 +957,47 @@ app.post("/make-server-a1c86d03/channels/:channelId/join", async (c) => {
   } catch (error) {
     console.error('Join channel error:', error);
     return c.json({ error: 'Failed to join channel' }, 500);
+  }
+});
+
+// Leave channel
+app.post("/make-server-a1c86d03/channels/:channelId/leave", async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const channelId = c.req.param('channelId');
+
+    const channel = await kv.get(`channel:${channelId}`);
+    if (!channel) {
+      return c.json({ error: 'Channel not found' }, 404);
+    }
+
+    // Check if user is a member
+    if (!channel.members?.includes(userId)) {
+      return c.json({ error: 'Not a member of this channel' }, 400);
+    }
+
+    // Prevent creator from leaving (they must delete the channel instead)
+    if (channel.creatorId === userId) {
+      return c.json({ error: 'Channel creator cannot leave. Delete the channel instead.' }, 400);
+    }
+
+    // Remove user from channel members
+    const updatedChannel = {
+      ...channel,
+      members: channel.members.filter((id: string) => id !== userId),
+    };
+
+    await kv.set(`channel:${channelId}`, updatedChannel);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Leave channel error:', error);
+    return c.json({ error: 'Failed to leave channel' }, 500);
   }
 });
 
@@ -1233,7 +1279,7 @@ app.get("/make-server-a1c86d03/stats", async (c) => {
     const totalUsers = allUsers.length;
 
     // Get online users (users who have been active in the last 5 minutes)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
     const onlineUsers = allUsers.filter((user: any) => {
       if (!user.lastActive) return false;
       return user.lastActive > fiveMinutesAgo;

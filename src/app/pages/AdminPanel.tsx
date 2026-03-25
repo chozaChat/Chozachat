@@ -3,6 +3,7 @@ import { Shield, Users, Settings, LogOut, Trash2, Key, AlertTriangle, CheckCircl
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { supabase } from "../../lib/supabase";
 import { useTheme } from "../contexts/ThemeContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -378,16 +379,25 @@ export default function AdminPanel() {
 
     setTrollLoading(true);
     try {
-      // Store command in localStorage to simulate global broadcast
-      const command = {
-        type: 'message',
-        message: globalMessage,
-        timestamp: Date.now()
-      };
-      localStorage.setItem('adminCommand', JSON.stringify(command));
+      // Broadcast via Supabase Realtime
+      const trollChannel = supabase.channel('troll-zone-global');
+      await trollChannel.subscribe();
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: {
+          action: 'broadcast',
+          message: globalMessage,
+          timestamp: Date.now()
+        }
+      });
 
       toast.success(`✉️ Global message broadcasted to all users!`);
       setGlobalMessage("");
+      
+      // Unsubscribe after sending
+      await supabase.removeChannel(trollChannel);
     } catch (error) {
       console.error("Send global message error:", error);
       toast.error("Failed to send message");
@@ -398,12 +408,23 @@ export default function AdminPanel() {
 
   const handleScreenShake = async () => {
     try {
-      const command = {
-        type: 'shake',
-        timestamp: Date.now()
-      };
-      localStorage.setItem('adminCommand', JSON.stringify(command));
+      // Broadcast via Supabase Realtime
+      const trollChannel = supabase.channel('troll-zone-global');
+      await trollChannel.subscribe();
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: {
+          action: 'shake',
+          timestamp: Date.now()
+        }
+      });
+      
       toast.success("🔨 Screen shake activated for all users!");
+      
+      // Unsubscribe after sending
+      await supabase.removeChannel(trollChannel);
     } catch (error) {
       console.error("Screen shake error:", error);
       toast.error("Failed to activate screen shake");
@@ -412,12 +433,23 @@ export default function AdminPanel() {
 
   const handleConfetti = async () => {
     try {
-      const command = {
-        type: 'confetti',
-        timestamp: Date.now()
-      };
-      localStorage.setItem('adminCommand', JSON.stringify(command));
+      // Broadcast via Supabase Realtime
+      const trollChannel = supabase.channel('troll-zone-global');
+      await trollChannel.subscribe();
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: {
+          action: 'confetti',
+          timestamp: Date.now()
+        }
+      });
+      
       toast.success("🎉 Confetti explosion triggered for all users!");
+      
+      // Unsubscribe after sending
+      await supabase.removeChannel(trollChannel);
     } catch (error) {
       console.error("Confetti error:", error);
       toast.error("Failed to trigger confetti");
@@ -426,12 +458,23 @@ export default function AdminPanel() {
 
   const handleFakeUpdate = async () => {
     try {
-      const command = {
-        type: 'update',
-        timestamp: Date.now()
-      };
-      localStorage.setItem('adminCommand', JSON.stringify(command));
+      // Broadcast via Supabase Realtime
+      const trollChannel = supabase.channel('troll-zone-global');
+      await trollChannel.subscribe();
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: {
+          action: 'update',
+          timestamp: Date.now()
+        }
+      });
+      
       toast.success("⚠️ Fake update alert sent to all users!");
+      
+      // Unsubscribe after sending
+      await supabase.removeChannel(trollChannel);
     } catch (error) {
       console.error("Fake update error:", error);
       toast.error("Failed to send update alert");
@@ -440,12 +483,23 @@ export default function AdminPanel() {
 
   const handleEmojiRain = async () => {
     try {
-      const command = {
-        type: 'emojiRain',
-        timestamp: Date.now()
-      };
-      localStorage.setItem('adminCommand', JSON.stringify(command));
+      // Broadcast via Supabase Realtime
+      const trollChannel = supabase.channel('troll-zone-global');
+      await trollChannel.subscribe();
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: {
+          action: 'emojiRain',
+          timestamp: Date.now()
+        }
+      });
+      
       toast.success("🌧️ Emoji rain activated for all users!");
+      
+      // Unsubscribe after sending
+      await supabase.removeChannel(trollChannel);
     } catch (error) {
       console.error("Emoji rain error:", error);
       toast.error("Failed to activate emoji rain");

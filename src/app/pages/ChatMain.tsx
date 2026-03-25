@@ -167,6 +167,8 @@ export default function ChatMain() {
   const [moderatorSearchQuery, setModeratorSearchQuery] = useState("");
   const [moderatorSearchResults, setModeratorSearchResults] = useState<User[]>([]);
   const [selectedUserForMod, setSelectedUserForMod] = useState<User | null>(null);
+  const [friendEmail, setFriendEmail] = useState("");
+  const [addFriendOpen, setAddFriendOpen] = useState(false);
 
   // Refs for Realtime channels
   const messageChannelRef = useRef<any>(null);
@@ -1004,6 +1006,39 @@ export default function ChatMain() {
     } catch (error) {
       console.error("Delete channel error:", error);
       toast.error("Failed to delete channel");
+    }
+  };
+
+  const handleLeaveChannel = async (channelId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${channelId}/leave`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || '',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        toast.error(data.error || "Failed to leave channel");
+        return;
+      }
+
+      toast.success("Left channel successfully!");
+      
+      // Clear selected chat if this channel was selected
+      if (selectedChat?.id === channelId) {
+        setSelectedChat(null);
+      }
+      
+      loadChannels();
+    } catch (error) {
+      console.error("Leave channel error:", error);
+      toast.error("Failed to leave channel");
     }
   };
 
@@ -2363,8 +2398,17 @@ export default function ChatMain() {
                     </>
                   )}
                   {channel.creatorId !== userId && (
-                    <DropdownMenuItem disabled className="text-gray-500">
-                      Only creator can edit
+                    <DropdownMenuItem
+                      className="text-red-600"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`Leave "${channel.name}"?`)) {
+                          await handleLeaveChannel(channel.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="size-4 mr-2" />
+                      Leave Channel
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
