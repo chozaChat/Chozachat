@@ -5,9 +5,10 @@ import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
-// VERSION: 2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS
+// VERSION: 2024-04-04-v29-MESSAGE-EDIT-FINAL-FIX
 
-console.log('🚀🚀🚀 SERVER STARTING - VERSION: v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS 🚀🚀🚀');
+console.log('🚀🚀🚀 SERVER STARTING - VERSION: v29-MESSAGE-EDIT-FINAL-FIX 🚀🚀🚀');
+console.log('🚀🚀🚀 DEPLOYED AT:', new Date().toISOString(), '🚀🚀🚀');
 
 // Apply CORS middleware FIRST
 app.use('*', cors({
@@ -1591,7 +1592,10 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
     }
 
     const body = await c.req.json();
-    const { chatId, chatType, content } = body;
+    const { chatId, chatType, content, replyTo } = body;
+
+    console.log('📨 [SEND MESSAGE] Received body:', JSON.stringify(body));
+    console.log('📨 [SEND MESSAGE] replyTo:', JSON.stringify(replyTo));
 
     if (!chatId || !chatType || !content) {
       return c.json({ error: 'chatId, chatType, and content are required' }, 400);
@@ -1614,15 +1618,23 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
     const messageKey = `messages:${chatType}:${chatId}`;
     const messages = await kv.get(messageKey) || [];
 
-    const message = {
+    const message: any = {
       id: crypto.randomUUID(),
       senderId: userId,
       content,
       timestamp: new Date().toISOString()
     };
 
+    // Include replyTo if provided
+    if (replyTo) {
+      message.replyTo = replyTo;
+      console.log('📨 [SEND MESSAGE] ✅ Saving message WITH reply:', JSON.stringify(message));
+    }
+
     messages.push(message);
     await kv.set(messageKey, messages);
+
+    console.log('📨 [SEND MESSAGE] ✅ Message saved successfully');
 
     return c.json({ message });
   } catch (error: any) {
@@ -1683,20 +1695,41 @@ app.put(`/${SERVER_ID}/message/:messageId`, async (c) => {
       return c.json({ error: 'You can only edit your own messages' }, 403);
     }
 
+    // UPDATE THE MESSAGE CONTENT
     messages[msgIndex].content = content;
     messages[msgIndex].text = content; // Also update text for backward compatibility
     messages[msgIndex].edited = true;
+    messages[msgIndex].editedAt = new Date().toISOString();
     
+    console.log('🔧 [EDIT MESSAGE] ✅ UPDATING MESSAGE CONTENT');
     console.log('🔧 [EDIT MESSAGE] Updating message in key:', messageKey);
-    console.log('🔧 [EDIT MESSAGE] Updated message:', JSON.stringify(messages[msgIndex]));
+    console.log('🔧 [EDIT MESSAGE] NEW CONTENT:', content);
+    console.log('🔧 [EDIT MESSAGE] Updated message object:', JSON.stringify(messages[msgIndex]));
+    
+    // SAVE TO DATABASE
     await kv.set(messageKey, messages);
     
     // Verify the update
     const verifyMessages = await kv.get(messageKey);
     const verifyMsg = verifyMessages?.find((m: any) => m.id === messageId);
-    console.log('🔧 [EDIT MESSAGE] Verification - message after save:', JSON.stringify(verifyMsg));
+    console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - message after save:', JSON.stringify(verifyMsg));
+    console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - content field:', verifyMsg?.content);
+    console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - text field:', verifyMsg?.text);
 
-    return c.json({ success: true, message: messages[msgIndex] });
+    // RETURN THE UPDATED MESSAGE WITH NEW CONTENT
+    const updatedMessage = messages[msgIndex];
+    console.log('🔧 [EDIT MESSAGE] ✅ RETURNING UPDATED MESSAGE:', JSON.stringify(updatedMessage));
+    
+    return c.json({ 
+      success: true, 
+      message: updatedMessage,
+      debug: {
+        messageId: messageId,
+        newContent: content,
+        edited: true,
+        timestamp: new Date().toISOString()
+      }
+    });
   } catch (error: any) {
     console.error('Edit message error:', error);
     return c.json({ error: 'Failed to edit message' }, 500);
