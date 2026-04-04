@@ -1630,6 +1630,137 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
   }
 });
 
+// Edit message
+app.put(`/${SERVER_ID}/message/:messageId`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    console.log('🔧🔧🔧 [EDIT MESSAGE v2.1] ENDPOINT CALLED - CACHE BUSTED!');
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const messageId = c.req.param('messageId');
+    const body = await c.req.json();
+    const { content, chatId, chatType } = body;
+
+    console.log('🔧 [EDIT MESSAGE] Starting edit for messageId:', messageId);
+    console.log('🔧 [EDIT MESSAGE] UserId:', userId);
+    console.log('🔧 [EDIT MESSAGE] ChatId:', chatId, 'ChatType:', chatType);
+    console.log('🔧 [EDIT MESSAGE] New content:', content);
+
+    if (!content || !content.trim()) {
+      return c.json({ error: 'Content is required' }, 400);
+    }
+
+    // Get current user to check if admin
+    const currentUser = await kv.get(`user:${userId}`);
+    const isAdmin = currentUser?.email === 'mikhail02323@gmail.com';
+
+    // Use chatId and chatType for direct lookup
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    console.log('🔧 [EDIT MESSAGE] Looking in key:', messageKey);
+    
+    const messages = await kv.get(messageKey) || [];
+    console.log('🔧 [EDIT MESSAGE] Found', messages.length, 'messages');
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === messageId);
+    
+    if (msgIndex === -1) {
+      console.error('🔧 [EDIT MESSAGE] Message not found:', messageId);
+      return c.json({ error: 'Message not found' }, 404);
+    }
+
+    console.log('🔧 [EDIT MESSAGE] Found message at index', msgIndex);
+    
+    // Check if user is the sender or an admin
+    if (messages[msgIndex].senderId !== userId && !isAdmin) {
+      return c.json({ error: 'You can only edit your own messages' }, 403);
+    }
+
+    messages[msgIndex].content = content;
+    messages[msgIndex].text = content; // Also update text for backward compatibility
+    messages[msgIndex].edited = true;
+    
+    console.log('🔧 [EDIT MESSAGE] Updating message in key:', messageKey);
+    console.log('🔧 [EDIT MESSAGE] Updated message:', JSON.stringify(messages[msgIndex]));
+    await kv.set(messageKey, messages);
+    
+    // Verify the update
+    const verifyMessages = await kv.get(messageKey);
+    const verifyMsg = verifyMessages?.find((m: any) => m.id === messageId);
+    console.log('🔧 [EDIT MESSAGE] Verification - message after save:', JSON.stringify(verifyMsg));
+
+    return c.json({ success: true, message: messages[msgIndex] });
+  } catch (error: any) {
+    console.error('Edit message error:', error);
+    return c.json({ error: 'Failed to edit message' }, 500);
+  }
+});
+
+// Delete message
+app.delete(`/${SERVER_ID}/message/:messageId`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const messageId = c.req.param('messageId');
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    console.log('🗑️ [DELETE MESSAGE] Starting delete for messageId:', messageId);
+    console.log('🗑️ [DELETE MESSAGE] UserId:', userId);
+    console.log('🗑️ [DELETE MESSAGE] ChatId:', chatId, 'ChatType:', chatType);
+
+    // Get current user to check if admin
+    const currentUser = await kv.get(`user:${userId}`);
+    const isAdmin = currentUser?.email === 'mikhail02323@gmail.com';
+
+    // Use chatId and chatType for direct lookup
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    console.log('🗑️ [DELETE MESSAGE] Looking in key:', messageKey);
+    
+    const messages = await kv.get(messageKey) || [];
+    console.log('🗑️ [DELETE MESSAGE] Found', messages.length, 'messages');
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === messageId);
+    
+    if (msgIndex === -1) {
+      console.error('🗑️ [DELETE MESSAGE] Message not found:', messageId);
+      return c.json({ error: 'Message not found' }, 404);
+    }
+
+    console.log('🗑️ [DELETE MESSAGE] Found message at index', msgIndex);
+    
+    // Check if user is the sender or an admin
+    if (messages[msgIndex].senderId !== userId && !isAdmin) {
+      return c.json({ error: 'You can only delete your own messages' }, 403);
+    }
+
+    const updatedMessages = messages.filter((m: any) => m.id !== messageId);
+    
+    console.log('🗑️ [DELETE MESSAGE] Deleting message from key:', messageKey);
+    await kv.set(messageKey, updatedMessages);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('Delete message error:', error);
+    return c.json({ error: 'Failed to delete message' }, 500);
+  }
+});
+
 // Get server statistics
 app.get(`/${SERVER_ID}/stats`, async (c) => {
   try {

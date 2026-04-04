@@ -14,12 +14,14 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
 import { ProfilePanel } from "../components/ProfilePanel";
-import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles } from "lucide-react";
+import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles, Reply, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 import { useBlur } from "../contexts/BlurContext";
 import { CustomPrompt } from "../components/CustomPrompt";
 import { StickerPicker } from "../components/StickerPicker";
+import { MessageItem } from "../components/MessageItem";
+import { MessageInput } from "../components/MessageInput";
 import { AnnouncementBanner } from "../components/AnnouncementBanner";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -124,6 +126,12 @@ interface Message {
   text?: string;
   content?: string;
   timestamp: string;
+  edited?: boolean;
+  replyTo?: {
+    id: string;
+    content: string;
+    senderName: string;
+  };
 }
 
 export default function ChatMain() {
@@ -228,6 +236,12 @@ export default function ChatMain() {
   
   // Sticker picker
   const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
+  
+  // Message actions (edit, reply, delete)
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [editMessageText, setEditMessageText] = useState("");
+  const [messageMenuOpen, setMessageMenuOpen] = useState<string | null>(null);
   
   // Initial loading state
   const [initialLoading, setInitialLoading] = useState(true);
@@ -545,6 +559,20 @@ export default function ChatMain() {
           }
           // Reload messages when a new message is broadcast
           loadMessages(selectedChat.type, selectedChat.id);
+        })
+        .on('broadcast', { event: 'message-edited' }, (payload: any) => {
+          console.log('Received message edit:', payload);
+          // Reload messages when a message is edited
+          if (payload && payload.payload) {
+            loadMessages(selectedChat.type, selectedChat.id);
+          }
+        })
+        .on('broadcast', { event: 'message-deleted' }, (payload: any) => {
+          console.log('Received message delete:', payload);
+          // Reload messages when a message is deleted
+          if (payload && payload.payload) {
+            loadMessages(selectedChat.type, selectedChat.id);
+          }
         })
         .subscribe((status: string) => {
           console.log('Message channel status:', status);
@@ -968,6 +996,7 @@ export default function ChatMain() {
       
       const data = await response.json();
       console.log(`✅ [loadMessages] Loaded ${data.messages?.length || 0} messages for ${chatType}:${chatId}`);
+      console.log('📝 [loadMessages] Last message:', JSON.stringify(data.messages?.[data.messages.length - 1]));
       if (data.messages) {
         setMessages(data.messages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -1668,6 +1697,108 @@ export default function ChatMain() {
     }
   };
 
+  // Handle message edit
+  const handleEditMessage = async () => {
+    if (!editingMessage || !editMessageText.trim()) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/message/${editingMessage.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || ''
+          },
+          body: JSON.stringify({ 
+            content: editMessageText,
+            chatId: selectedChat?.id,
+            chatType: selectedChat?.type
+          })
+        }
+      );
+
+      if (response.ok) {
+        const updatedMessage = await response.json();
+        console.log('Edit response from server:', updatedMessage);
+        
+        // Reload messages from server to ensure we have the latest data
+        if (selectedChat) {
+          await loadMessages(selectedChat.type, selectedChat.id);
+        }
+        
+        // Broadcast the edit so other users see it
+        if (messageChannelRef.current && selectedChat) {
+          await messageChannelRef.current.send({
+            type: 'broadcast',
+            event: 'message-edited',
+            payload: { chatType: selectedChat.type, chatId: selectedChat.id, messageId: editingMessage.id }
+          });
+        }
+        
+        setEditingMessage(null);
+        setEditMessageText("");
+        setMessageText("");
+        toast.success("Message updated");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to edit message");
+      }
+    } catch (error) {
+      console.error("Edit message error:", error);
+      toast.error("Failed to edit message");
+    }
+  };
+
+  // Handle message delete
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/message/${messageId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || ''
+          },
+          body: JSON.stringify({
+            chatId: selectedChat?.id,
+            chatType: selectedChat?.type
+          })
+        }
+      );
+
+      if (response.ok) {
+        setMessages(prev => prev.filter(m => m.id !== messageId));
+        
+        // Broadcast the deletion so other users see it
+        if (messageChannelRef.current && selectedChat) {
+          await messageChannelRef.current.send({
+            type: 'broadcast',
+            event: 'message-deleted',
+            payload: { chatType: selectedChat.type, chatId: selectedChat.id, messageId }
+          });
+        }
+        
+        toast.success("Message deleted");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to delete message");
+      }
+    } catch (error) {
+      console.error("Delete message error:", error);
+      toast.error("Failed to delete message");
+    }
+  };
+
+  // Handle reply to message
+  const handleReplyToMessage = (message: Message) => {
+    setReplyingTo(message);
+    messageInputRef.current?.focus();
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!messageText.trim() || !selectedChat || !userId) return;
@@ -1680,11 +1811,17 @@ export default function ChatMain() {
       id: tempId,
       senderId: userId,
       content: messageContent,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        content: replyingTo.content || replyingTo.text || '',
+        senderName: getSenderName(replyingTo.senderId)
+      } : undefined
     };
     
     setMessages(prev => [...prev, optimisticMessage]);
     setMessageText("");
+    setReplyingTo(null);
 
     try {
       // If it's AI chat, call Gemini API
@@ -1826,8 +1963,16 @@ export default function ChatMain() {
         }
 
         const data = await response.json();
-        // Replace temp message with real message from server
-        setMessages(prev => prev.map(m => m.id === tempId ? data.message : m));
+        // Replace temp message with real message from server, preserving replyTo if server didn't include it
+        setMessages(prev => prev.map(m => {
+          if (m.id === tempId) {
+            return {
+              ...data.message,
+              replyTo: data.message.replyTo || data.message.reply_to || m.replyTo
+            };
+          }
+          return m;
+        }));
         
         // Broadcast new news message via Realtime using existing channel
         if (messageChannelRef.current) {
@@ -1855,6 +2000,11 @@ export default function ChatMain() {
             chatId: selectedChat.id,
             content: messageContent,
             chatType: selectedChat.type,
+            replyTo: replyingTo ? {
+              id: replyingTo.id,
+              content: replyingTo.content || replyingTo.text || '',
+              senderName: getSenderName(replyingTo.senderId)
+            } : undefined
           }),
         }
       );
@@ -1872,8 +2022,16 @@ export default function ChatMain() {
       const data = await response.json();
       console.log("Message sent successfully");
       
-      // Replace temp message with real message from server
-      setMessages(prev => prev.map(m => m.id === tempId ? data.message : m));
+      // Replace temp message with real message from server, preserving replyTo if server didn't include it
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId) {
+          return {
+            ...data.message,
+            replyTo: data.message.replyTo || data.message.reply_to || m.replyTo
+          };
+        }
+        return m;
+      }));
       
       // Broadcast new message via Realtime using existing channel
       if (messageChannelRef.current) {
@@ -3563,8 +3721,6 @@ export default function ChatMain() {
                   {messages.map((message, index) => {
                     const isOwn = message.senderId === userId;
                     const isAI = message.senderId === 'ai-assistant';
-                    const messageContent = message.content || message.text || '';
-                    const isStickerMessage = isOnlySticker(messageContent);
                     
                     return (
                       <motion.div
@@ -3581,102 +3737,27 @@ export default function ChatMain() {
                         }}
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
-                        {isStickerMessage ? (
-                          // Sticker message - BIG and without background
-                          <motion.div
-                            className="flex flex-col items-center gap-1"
-                            whileHover={{ scale: 1.1 }}
-                            transition={{ type: "spring", stiffness: 300 }}
-                          >
-                            {!isOwn && (selectedChat.type === 'group' || selectedChat.type === 'news' || selectedChat.type === 'ai') && (
-                              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-                                {isAI ? (
-                                  <>
-                                    <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
-                                      <Sparkles className="size-2.5 text-white" />
-                                    </div>
-                                    <span className="font-semibold">AI Assistant</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    {getSenderEmoji(message.senderId) && (
-                                      <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
-                                    )}
-                                    <span key="name">{getSenderName(message.senderId)}</span>
-                                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
-                                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
-                                  </>
-                                )}
-                              </div>
-                            )}
-                            <div className="text-7xl md:text-8xl leading-none animate-bounce-subtle">
-                              {messageContent}
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              {new Date(message.timestamp).toLocaleTimeString([], { 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
-                              })}
-                            </div>
-                          </motion.div>
-                        ) : (
-                          // Regular message with bubble
-                          <div className={`max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
-                            {!isOwn && (selectedChat.type === 'group' || selectedChat.type === 'news' || selectedChat.type === 'ai') && (
-                              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
-                                {isAI ? (
-                                  <>
-                                    <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
-                                      <Sparkles className="size-2.5 text-white" />
-                                    </div>
-                                    <span className="font-semibold">AI Assistant</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    {getSenderEmoji(message.senderId) && (
-                                      <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
-                                    )}
-                                    <span key="name">{getSenderName(message.senderId)}</span>
-                                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
-                                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
-                                  </>
-                                )}
-                              </div>
-                            )}
-                            <motion.div
-                              whileHover={{ scale: 1.02 }}
-                              className={`px-4 py-2 rounded-2xl shadow-md transition-all ${
-                                isOwn
-                                  ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-br-sm hover:shadow-lg'
-                                  : 'bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-700 dark:to-gray-800 text-gray-900 dark:text-white rounded-bl-sm hover:shadow-lg'
-                              }`}
-                            >
-                              <div className="break-words">
-                                {isAI && !messageContent ? (
-                                  <span className="animate-shimmer font-semibold">Generating response...</span>
-                                ) : isAI ? (
-                                  // Format markdown for AI responses
-                                  messageContent.split(/(\*\*.*?\*\*|\*.*?\*)/g).map((part, i) => {
-                                    if (part.startsWith('**') && part.endsWith('**')) {
-                                      return <strong key={i}>{part.slice(2, -2)}</strong>;
-                                    } else if (part.startsWith('*') && part.endsWith('*')) {
-                                      return <em key={i}>{part.slice(1, -1)}</em>;
-                                    }
-                                    return <span key={i}>{part}</span>;
-                                  })
-                                ) : (
-                                  messageContent
-                                )}
-                              </div>
-                            </motion.div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3">
-                              {new Date(message.timestamp).toLocaleTimeString([], { 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
-                              })}
-                            </div>
-                          </div>
-                        )}
+                        <MessageItem
+                          message={message}
+                          isOwn={isOwn}
+                          isAI={isAI}
+                          chatType={selectedChat.type as 'friend' | 'group' | 'news' | 'channel' | 'ai'}
+                          getSenderName={getSenderName}
+                          getSenderEmoji={getSenderEmoji}
+                          getSenderIsVerified={getSenderIsVerified}
+                          getSenderTag={getSenderTag}
+                          getSenderIsAdmin={getSenderIsAdmin}
+                          getSenderTagColor={getSenderTagColor}
+                          renderVerifiedBadge={renderVerifiedBadge}
+                          renderTagBadge={renderTagBadge}
+                          onReply={handleReplyToMessage}
+                          onEdit={(msg, content) => {
+                            setEditingMessage(msg);
+                            setEditMessageText(content);
+                            setMessageText(content);
+                          }}
+                          onDelete={handleDeleteMessage}
+                        />
                       </motion.div>
                     );
                   })}
@@ -3700,48 +3781,21 @@ export default function ChatMain() {
                   🔒 Only channel admins can post messages
                 </div>
               ) : (
-                <form onSubmit={handleSendMessage} className="flex gap-2">
-                  <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => setStickerPickerOpen(true)}
-                      className="hover:bg-gradient-to-br hover:from-yellow-100 hover:to-orange-100 dark:hover:from-yellow-900/40 dark:hover:to-orange-900/40 transition-all"
-                    >
-                      <Smile className="size-5" />
-                    </Button>
-                  </motion.div>
-                  <Input
-                    ref={messageInputRef}
-                    type="text"
-                    placeholder="Type a message... 💬"
-                    value={messageText}
-                    onChange={(e) => setMessageText(e.target.value)}
-                    onFocus={() => {
-                      // Only scroll to bottom on focus if user is near bottom (for mobile keyboard)
-                      const scrollViewport = messagesEndRef.current?.parentElement?.parentElement;
-                      if (scrollViewport && scrollViewport.hasAttribute('data-radix-scroll-area-viewport')) {
-                        const isNearBottom = scrollViewport.scrollHeight - scrollViewport.scrollTop - scrollViewport.clientHeight < 200;
-                        if (isNearBottom) {
-                          setTimeout(() => {
-                            messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-                          }, 300); // Delay to account for keyboard animation
-                        }
-                      }
-                    }}
-                    className="flex-1 border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-600 rounded-full px-4 transition-all shadow-sm focus:shadow-md"
-                  />
-                  <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
-                    <Button 
-                      type="submit" 
-                      size="icon"
-                      className="bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all rounded-full"
-                    >
-                      <Send className="size-5" />
-                    </Button>
-                  </motion.div>
-                </form>
+                <MessageInput
+                  messageText={messageText}
+                  setMessageText={setMessageText}
+                  replyingTo={replyingTo}
+                  setReplyingTo={setReplyingTo}
+                  editingMessage={editingMessage}
+                  setEditingMessage={setEditingMessage}
+                  setEditMessageText={setEditMessageText}
+                  onSubmit={handleSendMessage}
+                  onEdit={handleEditMessage}
+                  onStickerClick={() => {/* Emoji picker logic */}}
+                  getSenderName={getSenderName}
+                  messageInputRef={messageInputRef}
+                  messagesEndRef={messagesEndRef}
+                />
               )}
             </div>
           </motion.div>
