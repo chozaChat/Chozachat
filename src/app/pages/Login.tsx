@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { supabase } from "../../lib/supabase";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 import { Moon, Sun } from "lucide-react";
+import { motion } from "motion/react";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -25,22 +26,34 @@ export default function Login() {
   const [checkingSession, setCheckingSession] = useState(true);
   const SERVER_ID = 'make-server-a1c86d03';
 
+  // Generate floating emojis once using useMemo
+  const floatingEmojis = useMemo(() => {
+    const emojiList = ['💬', '👋', '😊', '🎉', '✨', '🚀', '💙', '🌟'];
+    return [...Array(8)].map((_, i) => {
+      const startX = Math.random() * 90 + 5;
+      const startY = Math.random() * 90 + 5;
+      const endX = Math.random() * 90 + 5;
+      const endY = Math.random() * 90 + 5;
+      const scale = 0.5 + Math.random() * 1.5;
+      const duration = 25 + Math.random() * 15; // Slower: 25-40 seconds
+      const delay = Math.random() * 5;
+      const rotationSpeed = 20 + Math.random() * 20; // 20-40 seconds per rotation
+      return { id: `emoji-${i}`, emoji: emojiList[i], startX, startY, endX, endY, scale, duration, delay, rotationSpeed };
+    });
+  }, []);
+
   // Check for existing session on mount
   useEffect(() => {
-    const checkSession = async () => {
+    const checkSession = () => {
       try {
         console.log("Checking for existing session...");
-        const { data: { session } } = await supabase.auth.getSession();
         
-        if (session?.user) {
-          console.log("Active session found! Redirecting to chat...");
-          console.log("User ID:", session.user.id);
-          
-          // Store session data
-          localStorage.setItem("userId", session.user.id);
-          localStorage.setItem("accessToken", session.access_token);
-          
-          // Redirect to chat
+        // Check for custom auth session in localStorage
+        const accessToken = localStorage.getItem("accessToken");
+        const userId = localStorage.getItem("userId");
+        
+        if (accessToken && userId) {
+          console.log("Active session found in localStorage! Redirecting to chat...");
           navigate("/chat");
         } else {
           console.log("No active session found");
@@ -60,73 +73,42 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // First, try to find if identifier is a username
-      let email = identifier;
+      console.log("Attempting to login with identifier:", identifier);
       
-      // Check if identifier is a username (doesn't contain @)
-      if (!identifier.includes('@')) {
-        console.log("Identifier appears to be a username, looking up email...");
-        try {
-          const userLookupResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/lookup?username=${encodeURIComponent(identifier)}`,
-            {
-              headers: {
-                Authorization: `Bearer ${publicAnonKey}`,
-              },
-            }
-          );
-          
-          console.log("Username lookup response status:", userLookupResponse.status);
-          
-          if (userLookupResponse.ok) {
-            const userData = await userLookupResponse.json();
-            email = userData.email;
-            console.log("Username found, using email:", email);
-          } else {
-            const errorData = await userLookupResponse.json();
-            console.error("Username lookup failed:", errorData);
-            toast.error(
-              `Username "${identifier}" not found. Please check spelling or use your email address instead.`
-            );
-            setLoading(false);
-            return;
-          }
-        } catch (err) {
-          console.error("Username lookup error:", err);
-          toast.error("Failed to lookup username. Try using your email address instead.");
-          setLoading(false);
-          return;
+      // Call the login endpoint directly
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/login`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ 
+            email: identifier, // Can be username or email
+            password 
+          }),
         }
-      }
-      
-      console.log("Attempting to sign in with email:", email);
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      );
 
-      if (error) {
-        console.error("Supabase auth error:", error);
-        toast.error(`Login failed: ${error.message}`);
+      const data = await response.json();
+      console.log("Login response:", { status: response.status, data });
+
+      if (!response.ok) {
+        console.error("Login failed:", data.error);
+        toast.error(`Login failed: ${data.error || 'Unknown error'}`);
         setLoading(false);
         return;
       }
 
-      if (data.session) {
+      if (data.success && data.accessToken && data.userId) {
         // Store session
         console.log("Login successful - Session data:");
-        console.log("Access token (first 50 chars):", data.session.access_token.substring(0, 50));
-        console.log("User ID:", data.user.id);
-        console.log("Token expires at:", new Date(data.session.expires_at! * 1000).toISOString());
+        console.log("Access token (first 50 chars):", data.accessToken.substring(0, 50));
+        console.log("User ID:", data.userId);
         
-        localStorage.setItem("accessToken", data.session.access_token);
-        localStorage.setItem("userId", data.user.id);
-        
-        // Also store refresh token to maintain session
-        if (data.session.refresh_token) {
-          localStorage.setItem("refreshToken", data.session.refresh_token);
-        }
+        localStorage.setItem("accessToken", data.accessToken);
+        localStorage.setItem("userId", data.userId);
         
         // Verify storage
         console.log("Stored in localStorage:");
@@ -136,7 +118,7 @@ export default function Login() {
         // Check if password is compromised
         try {
           const userResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${data.user.id}`,
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${data.userId}`,
             {
               headers: {
                 Authorization: `Bearer ${publicAnonKey}`,
@@ -148,7 +130,7 @@ export default function Login() {
             const userData = await userResponse.json();
             if (userData.user?.passwordCompromised) {
               console.log("Password is marked as compromised");
-              setCurrentUserId(data.user.id);
+              setCurrentUserId(data.userId);
               setPasswordCompromised(true);
               setChangePasswordOpen(true);
               toast.warning("Your password has been flagged as compromised. Please change it.");
@@ -250,65 +232,108 @@ export default function Login() {
   };
 
   return (
-    <div className="size-full flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 relative">
+    <div className="size-full flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-950 relative overflow-hidden">
+      {/* Animated floating emojis in background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {floatingEmojis.map((emoji) => (
+          <motion.div
+            key={emoji.id}
+            className="absolute text-6xl opacity-20"
+            animate={{
+              left: [`${emoji.startX}%`, `${emoji.endX}%`, `${emoji.startX}%`],
+              top: [`${emoji.startY}%`, `${emoji.endY}%`, `${emoji.startY}%`],
+              scale: emoji.scale,
+              opacity: [0.15, 0.3, 0.15],
+            }}
+            transition={{
+              duration: emoji.duration,
+              repeat: Infinity,
+              ease: "easeInOut",
+              delay: emoji.delay
+            }}
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{
+                duration: emoji.rotationSpeed,
+                repeat: Infinity,
+                ease: "linear"
+              }}
+            >
+              {emoji.emoji}
+            </motion.div>
+          </motion.div>
+        ))}
+      </div>
+
       <Button
         variant="ghost"
         size="icon"
         onClick={toggleTheme}
-        className="absolute top-4 right-4"
+        className="absolute top-4 right-4 z-10"
         title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
       >
         {theme === 'light' ? <Moon className="size-5" /> : <Sun className="size-5" />}
       </Button>
-      <Card className="w-full max-w-md dark:bg-gray-900 dark:border-gray-800">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold dark:text-white">welcome back to chozaChat</CardTitle>
-          <CardDescription className="dark:text-gray-400">Enter your credentials to sign in</CardDescription>
-        </CardHeader>
-        <form onSubmit={handleLogin}>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="identifier" className="dark:text-white">Email</Label>
-              <Input
-                id="identifier"
-                type="text"
-                placeholder="your@email.com"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                required
-                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="dark:text-white">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col space-y-4">
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in..." : "Sign in"}
-            </Button>
-            <div className="text-sm text-center text-gray-600 dark:text-gray-400">
-              Don't have an account?{" "}
-              <button
-                type="button"
-                onClick={() => navigate("/signup")}
-                className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-              >
-                Sign up
-              </button>
-            </div>
-          </CardFooter>
-        </form>
-      </Card>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="relative z-10"
+      >
+        <Card 
+          className="w-full max-w-md bg-white/40 dark:bg-gray-900/40 border-2 border-white/30 dark:border-gray-700/30 shadow-2xl" 
+          style={{ backdropFilter: 'blur(4px)' }}
+        >
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-2xl font-bold dark:text-white">welcome back to chozaChat</CardTitle>
+            <CardDescription className="dark:text-gray-400">Enter your credentials to sign in</CardDescription>
+          </CardHeader>
+          <form onSubmit={handleLogin}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="identifier" className="dark:text-white">Email or username</Label>
+                <Input
+                  id="identifier"
+                  type="text"
+                  placeholder="your@email.com or username"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  required
+                  className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password" className="dark:text-white">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col space-y-4">
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Signing in..." : "Sign in"}
+              </Button>
+              <div className="text-sm text-center text-gray-600 dark:text-gray-400">
+                Don't have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => navigate("/signup")}
+                  className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                >
+                  Sign up
+                </button>
+              </div>
+            </CardFooter>
+          </form>
+        </Card>
+      </motion.div>
 
       {/* Password Compromised Dialog */}
       <Dialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen}>

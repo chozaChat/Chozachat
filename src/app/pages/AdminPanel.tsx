@@ -1,13 +1,27 @@
 import { useState, useEffect } from "react";
-import { Shield, Users, Settings, LogOut, Trash2, Key, AlertTriangle, CheckCircle, MoreVertical, MessageSquare, Hash } from "lucide-react";
-import { toast } from "sonner";
 import { useNavigate } from "react-router";
+import { useTheme } from "../contexts/ThemeContext";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { supabase } from "../../lib/supabase";
-import { useTheme } from "../contexts/ThemeContext";
+import { toast } from "sonner";
+import { 
+  Shield, 
+  MessageSquare, 
+  Users, 
+  Settings, 
+  CheckCircle, 
+  MoreVertical, 
+  LogOut, 
+  AlertTriangle, 
+  Key, 
+  Trash2,
+  CheckSquare,
+  Square
+} from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -78,6 +92,10 @@ export default function AdminPanel() {
   const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [selectedChannelIds, setSelectedChannelIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteChannelsDialogOpen, setBulkDeleteChannelsDialogOpen] = useState(false);
 
   // Settings states
   const [serverName, setServerName] = useState("ChozaChat Admin");
@@ -88,10 +106,17 @@ export default function AdminPanel() {
   const [enableFileUploads, setEnableFileUploads] = useState(false);
   const [requireEmailVerification, setRequireEmailVerification] = useState(false);
   const [enableOnlineStatus, setEnableOnlineStatus] = useState(true);
+  const [geminiApiKey, setGeminiApiKey] = useState("");
 
   // Troll states
   const [globalMessage, setGlobalMessage] = useState("");
   const [trollLoading, setTrollLoading] = useState(false);
+
+  // Announcement states
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementDescription, setAnnouncementDescription] = useState("");
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [currentAnnouncement, setCurrentAnnouncement] = useState<any>(null);
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
@@ -134,6 +159,7 @@ export default function AdminPanel() {
         
         loadAllUsers(id);
         loadAllChannels(id);
+        loadSettings(id);
       } else {
         navigate("/");
       }
@@ -218,6 +244,153 @@ export default function AdminPanel() {
       }
     } catch (error) {
       console.error("Load all channels error:", error);
+    }
+  };
+
+  const loadSettings = async (userIdToUse?: string) => {
+    const idToUse = userIdToUse || userId;
+    if (!idToUse) {
+      console.error("No user ID available to load settings");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/settings`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": idToUse,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // Silently return if not authorized
+        if (response.status === 403) {
+          return;
+        }
+        const errorText = await response.text();
+        console.error("Failed to load settings:", response.status, response.statusText, errorText);
+        return;
+      }
+
+      const data = await response.json();
+      console.log("Loaded settings:", data.settings);
+      if (data.settings) {
+        setServerName(data.settings.serverName || "ChozaChat Admin");
+        setMaxGroupMembers(String(data.settings.maxGroupMembers || 50));
+        setAllowRegistration(data.settings.allowRegistration !== false);
+        setMessageRetentionDays(String(data.settings.messageRetentionDays || 365));
+        setMaxMessageLength(String(data.settings.maxMessageLength || 2000));
+        setEnableFileUploads(data.settings.enableFileUploads || false);
+        setRequireEmailVerification(data.settings.requireEmailVerification || false);
+        setEnableOnlineStatus(data.settings.enableOnlineStatus !== false);
+        setGeminiApiKey(data.settings.geminiApiKey || '');  // Load API key from Supabase
+      }
+      
+      // Load announcement after loading settings
+      loadAnnouncement(idToUse);
+    } catch (error) {
+      console.error("Load settings error:", error);
+    }
+  };
+
+  const loadAnnouncement = async (userIdToUse?: string) => {
+    const idToUse = userIdToUse || userId;
+    if (!idToUse) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": idToUse,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.announcement) {
+          setCurrentAnnouncement(data.announcement);
+          setAnnouncementTitle(data.announcement.title || "");
+          setAnnouncementDescription(data.announcement.description || "");
+          setAnnouncementEnabled(data.announcement.enabled || false);
+        }
+      }
+    } catch (error) {
+      console.error("Load announcement error:", error);
+    }
+  };
+
+  const handleSaveAnnouncement = async () => {
+    if (!userId) {
+      toast.error("User ID not found");
+      return;
+    }
+
+    if (!announcementTitle.trim()) {
+      toast.error("Please enter an announcement title");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": userId,
+          },
+          body: JSON.stringify({
+            title: announcementTitle,
+            description: announcementDescription,
+            enabled: announcementEnabled,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to save announcement");
+        return;
+      }
+
+      toast.success("Announcement saved successfully!");
+      loadAnnouncement();
+    } catch (error) {
+      console.error("Save announcement error:", error);
+      toast.error("Failed to save announcement");
+    }
+  };
+
+  const handleDisableAnnouncement = async () => {
+    if (!userId) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement/disable`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": userId,
+          },
+        }
+      );
+
+      if (response.ok) {
+        toast.success("Announcement disabled");
+        setAnnouncementEnabled(false);
+        loadAnnouncement();
+      }
+    } catch (error) {
+      console.error("Disable announcement error:", error);
     }
   };
 
@@ -464,6 +637,156 @@ export default function AdminPanel() {
     } catch (error) {
       console.error("Toggle moderator error:", error);
       toast.error("Failed to update moderator status");
+    }
+  };
+
+  const handleToggleUserSelection = (userId: string) => {
+    setSelectedUserIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) {
+        newSet.delete(userId);
+      } else {
+        newSet.add(userId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    const validUsers = allUsers.filter(u => u.name && u.username && u.id !== userId);
+    if (selectedUserIds.size === validUsers.length) {
+      // Deselect all
+      setSelectedUserIds(new Set());
+    } else {
+      // Select all
+      setSelectedUserIds(new Set(validUsers.map(u => u.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedUserIds.size === 0) {
+      toast.error("No users selected");
+      return;
+    }
+
+    setBulkDeleteDialogOpen(false);
+
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const userIdToDelete of Array.from(selectedUserIds)) {
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${userIdToDelete}`,
+            {
+              method: "DELETE",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+                "X-User-Id": userId || "",
+              },
+            }
+          );
+
+          if (response.ok) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch (error) {
+          console.error(`Failed to delete user ${userIdToDelete}:`, error);
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`Successfully deleted ${successCount} user${successCount > 1 ? 's' : ''}`);
+      }
+      if (failCount > 0) {
+        toast.error(`Failed to delete ${failCount} user${failCount > 1 ? 's' : ''}`);
+      }
+
+      setSelectedUserIds(new Set());
+      loadAllUsers();
+    } catch (error) {
+      console.error("Bulk delete error:", error);
+      toast.error("Failed to delete users");
+    }
+  };
+
+  const handleToggleChannelSelection = (channelId: string) => {
+    setSelectedChannelIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(channelId)) {
+        newSet.delete(channelId);
+      } else {
+        newSet.add(channelId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleToggleSelectAllChannels = () => {
+    const validChannels = allChannels.filter(c => c.type === 'channel');
+    if (selectedChannelIds.size === validChannels.length) {
+      // Deselect all
+      setSelectedChannelIds(new Set());
+    } else {
+      // Select all
+      setSelectedChannelIds(new Set(validChannels.map(c => c.id)));
+    }
+  };
+
+  const handleBulkDeleteChannels = async () => {
+    if (selectedChannelIds.size === 0) {
+      toast.error("No channels selected");
+      return;
+    }
+
+    setBulkDeleteChannelsDialogOpen(false);
+
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const channelIdToDelete of Array.from(selectedChannelIds)) {
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${channelIdToDelete}`,
+            {
+              method: "DELETE",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+                "X-User-Id": userId || "",
+              },
+            }
+          );
+
+          if (response.ok) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } catch (error) {
+          console.error(`Failed to delete channel ${channelIdToDelete}:`, error);
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`Successfully deleted ${successCount} channel${successCount > 1 ? 's' : ''}`);
+      }
+      if (failCount > 0) {
+        toast.error(`Failed to delete ${failCount} channel${failCount > 1 ? 's' : ''}`);
+      }
+
+      setSelectedChannelIds(new Set());
+      loadAllChannels();
+    } catch (error) {
+      console.error("Bulk delete channels error:", error);
+      toast.error("Failed to delete channels");
     }
   };
 
@@ -741,6 +1064,51 @@ export default function AdminPanel() {
     }
   };
 
+  const handleSaveSettings = async () => {
+    if (!userId) {
+      toast.error("User ID not found");
+      return;
+    }
+
+    try {
+      const settings = {
+        serverName,
+        maxGroupMembers: parseInt(maxGroupMembers) || 50,
+        allowRegistration,
+        messageRetentionDays: parseInt(messageRetentionDays) || 365,
+        maxMessageLength: parseInt(maxMessageLength) || 2000,
+        enableFileUploads,
+        requireEmailVerification,
+        enableOnlineStatus,
+        geminiApiKey: geminiApiKey || '',  // Save API key to Supabase settings
+      };
+
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/settings`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            "X-User-Id": userId,
+          },
+          body: JSON.stringify(settings),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        toast.error(data.error || "Failed to save settings");
+        return;
+      }
+
+      toast.success("Settings saved successfully!");
+    } catch (error) {
+      console.error("Save settings error:", error);
+      toast.error("Failed to save settings");
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -754,95 +1122,150 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <div className="border-b border-gray-800 bg-gray-900">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Shield className="size-8 text-red-500" />
-            <div>
-              <h1 className="text-2xl font-bold">Admin Panel</h1>
-              <p className="text-sm text-gray-400">ChozaChat Administration</p>
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col h-screen overflow-hidden">
+      {/* Header - Fixed */}
+      <div className="border-b border-gray-800 bg-gray-900 flex-shrink-0">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <Shield className="size-8 text-red-500 flex-shrink-0" />
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold truncate">Admin Panel</h1>
+              <p className="text-sm text-gray-400 hidden md:block">ChozaChat Administration</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
             <Button
               variant="outline"
-              className="border-gray-700 hover:bg-gray-800"
+              className="border-blue-600 text-blue-400 hover:bg-blue-600 hover:text-white transition-colors"
               onClick={() => navigate("/chat")}
             >
-              <MessageSquare className="size-4 mr-2" />
-              Back to Chats
+              <MessageSquare className="size-4 md:mr-2" />
+              <span className="hidden sm:inline">Back to Chats</span>
             </Button>
-            <div className="text-right">
+            <div className="text-right hidden md:block">
               <div className="font-medium">{currentUser.name}</div>
               <div className="text-xs text-gray-400">{currentUser.email}</div>
             </div>
-            <Avatar>
+            <Avatar className="flex-shrink-0">
               <AvatarFallback className="bg-red-600 text-white">
                 {currentUser.emoji ? (
                   <span className="text-2xl">{currentUser.emoji}</span>
                 ) : (
-                  currentUser.name.charAt(0).toUpperCase()
+                  currentUser.name?.charAt(0)?.toUpperCase() || "?"
                 )}
               </AvatarFallback>
             </Avatar>
-            <Button variant="ghost" size="icon" onClick={handleLogout}>
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="flex-shrink-0">
               <LogOut className="size-5" />
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <Tabs defaultValue="users" className="w-full">
-          <TabsList className="bg-gray-900 border border-gray-800">
-            <TabsTrigger value="users" className="data-[state=active]:bg-gray-800">
-              <Users className="size-4 mr-2" />
-              Users
-            </TabsTrigger>
-            <TabsTrigger value="troll" className="data-[state=active]:bg-gray-800">
-              <span className="mr-2">😈</span>
-              Troll Zone
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="data-[state=active]:bg-gray-800">
-              <Settings className="size-4 mr-2" />
-              Settings
-            </TabsTrigger>
-          </TabsList>
+      {/* Content - Scrollable */}
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full max-w-7xl mx-auto px-4 py-6 flex flex-col">
+          <Tabs defaultValue="users" className="w-full flex flex-col h-full overflow-hidden">
+            <TabsList className="bg-gray-900 border border-gray-800 flex-shrink-0">
+              <TabsTrigger value="users" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400">
+                <Users className="size-4 mr-2" />
+                Users
+              </TabsTrigger>
+              <TabsTrigger value="channels" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400">
+                <span className="mr-2">#</span>
+                Channels
+              </TabsTrigger>
+              <TabsTrigger value="troll" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400">
+                <span className="mr-2">😈</span>
+                Troll Zone
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white text-gray-400">
+                <Settings className="size-4 mr-2" />
+                Settings
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="users" className="mt-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-              <div className="mb-4">
-                <h2 className="text-xl font-bold">User Management</h2>
-                <p className="text-sm text-gray-400">Total users: {allUsers.length}</p>
-              </div>
-              
-              <ScrollArea className="h-[600px] pr-4">
+          <TabsContent value="users" className="mt-6 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold">User Management</h2>
+                    <p className="text-sm text-gray-400">Total users: {allUsers.filter(u => u.name && u.username).length}</p>
+                  </div>
+                  {selectedUserIds.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400">{selectedUserIds.size} selected</span>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setBulkDeleteDialogOpen(true)}
+                      >
+                        <Trash2 className="size-4 mr-2" />
+                        Delete Selected
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {allUsers.filter(u => u.name && u.username).length > 0 && (
+                  <div className="mb-3 flex items-center gap-2 pb-3 border-b border-gray-700">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleToggleSelectAll}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      {selectedUserIds.size === allUsers.filter(u => u.name && u.username && u.id !== userId).length ? (
+                        <CheckSquare className="size-4 mr-2" />
+                      ) : (
+                        <Square className="size-4 mr-2" />
+                      )}
+                      {selectedUserIds.size === allUsers.filter(u => u.name && u.username && u.id !== userId).length ? "Deselect All" : "Select All"}
+                    </Button>
+                  </div>
+                )}
+                
                 <div className="space-y-3">
-                  {allUsers.map((user) => (
+                  {allUsers.filter(u => u.name && u.username).map((user) => (
                     <div
                       key={user.id}
-                      className="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:bg-gray-750 transition-colors cursor-pointer"
-                      onClick={() => {
-                        setSelectedUser(user);
-                        setUserMenuOpen(true);
-                      }}
+                      className="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:bg-gray-750 transition-colors"
                     >
                       <div className="flex items-center gap-3">
+                        {user.id !== userId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleUserSelection(user.id);
+                            }}
+                            className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+                          >
+                            {selectedUserIds.has(user.id) ? (
+                              <CheckSquare className="size-5 text-blue-500" />
+                            ) : (
+                              <Square className="size-5" />
+                            )}
+                          </button>
+                        )}
                         <Avatar>
                           <AvatarFallback className="bg-blue-600 text-white">
-                            {user.emoji ? (
+                            {user?.emoji ? (
                               <span className="text-2xl">{user.emoji}</span>
                             ) : (
-                              user.name.charAt(0).toUpperCase()
+                              user?.name?.charAt(0)?.toUpperCase() || "?"
                             )}
                           </AvatarFallback>
                         </Avatar>
-                        <div className="flex-1">
+                        <div 
+                          className="flex-1 cursor-pointer"
+                          onClick={() => {
+                            setSelectedUser(user);
+                            setUserMenuOpen(true);
+                          }}
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">{user.name}</span>
+                            <span className="font-medium">{user?.name || 'Unknown'}</span>
                             {user.verified && (
                               <CheckCircle className="size-4 text-blue-500" />
                             )}
@@ -861,26 +1284,138 @@ export default function AdminPanel() {
                               <AlertTriangle className="size-4 text-yellow-500" />
                             )}
                           </div>
-                          <div className="text-xs text-gray-400">@{user.username}</div>
-                          <div className="text-xs text-gray-500">{user.email}</div>
+                          <div className="text-xs text-gray-400">@{user?.username || 'unknown'}</div>
+                          <div className="text-xs text-gray-500">{user?.email || 'No email'}</div>
                         </div>
-                        <MoreVertical className="size-5 text-gray-400" />
+                        <MoreVertical 
+                          className="size-5 text-gray-400 cursor-pointer"
+                          onClick={() => {
+                            setSelectedUser(user);
+                            setUserMenuOpen(true);
+                          }}
+                        />
                       </div>
                     </div>
                   ))}
                 </div>
-              </ScrollArea>
-            </div>
+              </div>
+            </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="troll" className="mt-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-              <div className="mb-6">
-                <h2 className="text-xl font-bold">😈 Troll Zone</h2>
-                <p className="text-sm text-gray-400">Have some fun with your users (responsibly!)</p>
-              </div>
+          <TabsContent value="channels" className="mt-6 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold">Channel Management</h2>
+                    <p className="text-sm text-gray-400">Total channels: {allChannels.filter(c => c.type === 'channel').length}</p>
+                  </div>
+                  {selectedChannelIds.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400">{selectedChannelIds.size} selected</span>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setBulkDeleteChannelsDialogOpen(true)}
+                      >
+                        <Trash2 className="size-4 mr-2" />
+                        Delete Selected
+                      </Button>
+                    </div>
+                  )}
+                </div>
 
-              <div className="space-y-6 max-w-4xl">
+                {allChannels.filter(c => c.type === 'channel').length > 0 && (
+                  <div className="mb-3 flex items-center gap-2 pb-3 border-b border-gray-700">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleToggleSelectAllChannels}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      {selectedChannelIds.size === allChannels.filter(c => c.type === 'channel').length ? (
+                        <CheckSquare className="size-4 mr-2" />
+                      ) : (
+                        <Square className="size-4 mr-2" />
+                      )}
+                      {selectedChannelIds.size === allChannels.filter(c => c.type === 'channel').length ? "Deselect All" : "Select All"}
+                    </Button>
+                  </div>
+                )}
+                
+                <div className="space-y-3">
+                  {allChannels.filter(c => c.type === 'channel').map((channel) => (
+                    <div
+                      key={channel.id}
+                      className="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:bg-gray-750 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleChannelSelection(channel.id);
+                          }}
+                          className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+                        >
+                          {selectedChannelIds.has(channel.id) ? (
+                            <CheckSquare className="size-5 text-purple-500" />
+                          ) : (
+                            <Square className="size-5" />
+                          )}
+                        </button>
+                        <Avatar>
+                          <AvatarFallback className="bg-purple-600 text-white">
+                            {channel.emoji ? (
+                              <span className="text-2xl">{channel.emoji}</span>
+                            ) : (
+                              "#"
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div 
+                          className="flex-1 cursor-pointer"
+                          onClick={() => {
+                            setSelectedChannel(channel);
+                            setChannelMenuOpen(true);
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{channel.name}</span>
+                            {channel.verified && (
+                              <CheckCircle className="size-4 text-blue-500" />
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            @{channel.username}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Created {channel.createdAt ? new Date(channel.createdAt).toLocaleDateString() : 'Unknown'}
+                          </div>
+                        </div>
+                        <MoreVertical 
+                          className="size-5 text-gray-400 cursor-pointer"
+                          onClick={() => {
+                            setSelectedChannel(channel);
+                            setChannelMenuOpen(true);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="troll" className="mt-6 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold">😈 Troll Zone</h2>
+                  <p className="text-sm text-gray-400">Have some fun with your users (responsibly!)</p>
+                </div>
+
+                <div className="space-y-6 max-w-4xl">
                 {/* Global Message */}
                 <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
                   <h3 className="text-lg font-semibold mb-3 text-white flex items-center gap-2">
@@ -979,17 +1514,19 @@ export default function AdminPanel() {
                   </p>
                 </div>
               </div>
-            </div>
+              </div>
+            </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="settings" className="mt-6">
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-              <div className="mb-6">
-                <h2 className="text-xl font-bold">Server Settings</h2>
-                <p className="text-sm text-gray-400">Configure your ChozaChat server</p>
-              </div>
+          <TabsContent value="settings" className="mt-6 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+                <div className="mb-6">
+                  <h2 className="text-xl font-bold">Server Settings</h2>
+                  <p className="text-sm text-gray-400">Configure your ChozaChat server</p>
+                </div>
 
-              <div className="space-y-6 max-w-2xl">
+                <div className="space-y-6 max-w-2xl">
                 <div>
                   <h3 className="text-lg font-semibold mb-4 text-white">General Settings</h3>
                   <div className="space-y-4">
@@ -1102,15 +1639,124 @@ export default function AdminPanel() {
                   </div>
                 </div>
 
+                <div className="border-t border-gray-800 pt-6">
+                  <h3 className="text-lg font-semibold mb-4 text-white">AI Settings</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="geminiApiKey" className="text-white">Gemini API Key (Global)</Label>
+                      <Input
+                        id="geminiApiKey"
+                        type="password"
+                        value={geminiApiKey}
+                        onChange={(e) => setGeminiApiKey(e.target.value)}
+                        placeholder="AIzaSy..."
+                        className="mt-2 bg-gray-800 border-gray-700 text-white"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">
+                        Set a global Gemini API key for all users. Users can override with their own key in settings.
+                      </p>
+                      {geminiApiKey && (
+                        <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
+                          <span>✓</span> Global API key is configured (remember to click Save Settings)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save Settings Button */}
+                <div className="border-t border-gray-800 pt-6">
+                  <Button 
+                    onClick={handleSaveSettings} 
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Save Settings
+                  </Button>
+                </div>
+
+                {/* Announcement Section */}
+                <div className="border-t border-gray-800 pt-6">
+                  <h3 className="text-lg font-semibold mb-4 text-white">Global Announcements</h3>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Create announcements that will be shown to all users on login
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="announcementTitle" className="text-white">Announcement Title</Label>
+                      <Input
+                        id="announcementTitle"
+                        type="text"
+                        value={announcementTitle}
+                        onChange={(e) => setAnnouncementTitle(e.target.value)}
+                        placeholder="Enter announcement title..."
+                        className="mt-2 bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="announcementDescription" className="text-white">Announcement Description</Label>
+                      <Textarea
+                        id="announcementDescription"
+                        value={announcementDescription}
+                        onChange={(e) => setAnnouncementDescription(e.target.value)}
+                        placeholder="Enter announcement description..."
+                        className="mt-2 bg-gray-800 border-gray-700 text-white min-h-[100px]"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="announcementEnabled"
+                        checked={announcementEnabled}
+                        onChange={(e) => setAnnouncementEnabled(e.target.checked)}
+                        className="rounded"
+                      />
+                      <Label htmlFor="announcementEnabled" className="text-white">
+                        Enable Announcement (Show to all users)
+                      </Label>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={handleSaveAnnouncement} 
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        Save Announcement
+                      </Button>
+                      {currentAnnouncement && announcementEnabled && (
+                        <Button 
+                          onClick={handleDisableAnnouncement} 
+                          variant="outline"
+                          className="border-gray-700 hover:bg-gray-800"
+                        >
+                          Disable Current
+                        </Button>
+                      )}
+                    </div>
+
+                    {currentAnnouncement && (
+                      <div className="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mt-4">
+                        <p className="text-sm text-blue-200">
+                          <strong>📢 Current announcement:</strong> {currentAnnouncement.title}
+                          {currentAnnouncement.enabled ? ' (Active)' : ' (Disabled)'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="pt-4 border-t border-gray-800">
-                  <Button onClick={() => toast.success("Settings saved!")} className="bg-blue-600 hover:bg-blue-700">
+                  <Button onClick={handleSaveSettings} className="bg-blue-600 hover:bg-blue-700">
                     Save Settings
                   </Button>
                 </div>
               </div>
-            </div>
+              </div>
+            </ScrollArea>
           </TabsContent>
         </Tabs>
+        </div>
       </div>
 
       {/* User Menu Dialog */}
@@ -1230,6 +1876,186 @@ export default function AdminPanel() {
             </Button>
             <Button onClick={handleChangePassword}>
               Change Password
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Channel Menu Dialog */}
+      <Dialog open={channelMenuOpen} onOpenChange={setChannelMenuOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle>Manage Channel: {selectedChannel?.name}</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Select an action to perform on this channel
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedChannel && (
+            <div className="space-y-3">
+              <Button
+                key="verify-btn"
+                onClick={() => handleToggleChannelVerified(selectedChannel)}
+                className="w-full justify-start"
+                variant="outline"
+              >
+                <CheckCircle className="size-4 mr-2" />
+                {selectedChannel.verified ? "Remove Verification" : "Verify Channel"}
+              </Button>
+              
+              <Button
+                key="scam-btn"
+                onClick={async () => {
+                  if (!confirm(`Mark "${selectedChannel.name}" as SCAM? This will display a SCAM badge on the channel.`)) {
+                    return;
+                  }
+                  
+                  try {
+                    // Mark channel as SCAM by setting its tag
+                    const response = await fetch(
+                      `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${selectedChannel.id}/scam`,
+                      {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${publicAnonKey}`,
+                          "X-User-Id": userId || "",
+                        },
+                      }
+                    );
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                      toast.error(data.error || "Failed to mark channel as SCAM");
+                      return;
+                    }
+
+                    toast.success(`${selectedChannel.name} marked as SCAM`);
+                    setChannelMenuOpen(false);
+                    loadAllChannels();
+                  } catch (error) {
+                    console.error("Mark channel as scam error:", error);
+                    toast.error("Failed to mark channel as SCAM");
+                  }
+                }}
+                className="w-full justify-start bg-red-600 hover:bg-red-700 text-white"
+                variant="outline"
+              >
+                <AlertTriangle className="size-4 mr-2" />
+                Mark as SCAM
+              </Button>
+              
+              <Button
+                key="delete-btn"
+                onClick={async () => {
+                  if (!confirm(`Delete "${selectedChannel.name}"? This will permanently delete the channel and all its messages. This action cannot be undone.`)) {
+                    return;
+                  }
+                  
+                  try {
+                    const response = await fetch(
+                      `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${selectedChannel.id}`,
+                      {
+                        method: "DELETE",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${publicAnonKey}`,
+                          "X-User-Id": userId || "",
+                        },
+                      }
+                    );
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                      toast.error(data.error || "Failed to delete channel");
+                      return;
+                    }
+
+                    toast.success(`Channel "${selectedChannel.name}" deleted successfully`);
+                    setChannelMenuOpen(false);
+                    setSelectedChannel(null);
+                    loadAllChannels();
+                  } catch (error) {
+                    console.error("Delete channel error:", error);
+                    toast.error("Failed to delete channel");
+                  }
+                }}
+                className="w-full justify-start"
+                variant="destructive"
+              >
+                <Trash2 className="size-4 mr-2" />
+                Delete Channel
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-red-500">⚠️ Confirm Bulk Delete</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Are you sure you want to delete {selectedUserIds.size} user{selectedUserIds.size > 1 ? 's' : ''}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
+            <p className="text-sm text-yellow-200">
+              <strong>Warning:</strong> This will permanently delete all selected users, their data, and messages.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setBulkDeleteDialogOpen(false)}
+              className="border-gray-700 hover:bg-gray-800"
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive"
+              onClick={handleBulkDelete}
+            >
+              <Trash2 className="size-4 mr-2" />
+              Delete {selectedUserIds.size} User{selectedUserIds.size > 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Channels Confirmation Dialog */}
+      <Dialog open={bulkDeleteChannelsDialogOpen} onOpenChange={setBulkDeleteChannelsDialogOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-red-500">⚠️ Confirm Bulk Delete Channels</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Are you sure you want to delete {selectedChannelIds.size} channel{selectedChannelIds.size > 1 ? 's' : ''}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
+            <p className="text-sm text-yellow-200">
+              <strong>Warning:</strong> This will permanently delete all selected channels and their messages.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setBulkDeleteChannelsDialogOpen(false)}
+              className="border-gray-700 hover:bg-gray-800"
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive"
+              onClick={handleBulkDeleteChannels}
+            >
+              <Trash2 className="size-4 mr-2" />
+              Delete {selectedChannelIds.size} Channel{selectedChannelIds.size > 1 ? 's' : ''}
             </Button>
           </DialogFooter>
         </DialogContent>

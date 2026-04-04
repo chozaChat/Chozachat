@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router";
-import { createClient } from "@supabase/supabase-js";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -21,27 +20,35 @@ export function Login() {
     setLoading(true);
 
     try {
-      const supabase = createClient(
-        `https://${projectId}.supabase.co`,
-        publicAnonKey
+      console.log('🔐 [LOGIN] Attempting login for:', email);
+      
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-a1c86d03/login`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ email, password }),
+        }
       );
 
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const data = await response.json();
 
-      if (authError) {
-        setError(authError.message);
+      if (!response.ok) {
+        console.error('🔐 [LOGIN] Login failed:', data.error);
+        setError(data.error || "Login failed");
         setLoading(false);
         return;
       }
 
-      if (data.session) {
-        localStorage.setItem("accessToken", data.session.access_token);
-        navigate("/chat");
-      }
+      console.log('🔐 [LOGIN] Login successful!');
+      localStorage.setItem("accessToken", data.accessToken);
+      localStorage.setItem("userId", data.userId);
+      navigate("/chat");
     } catch (err) {
+      console.error('🔐 [LOGIN] Error:', err);
       setError("An error occurred during login");
       console.error(err);
     } finally {

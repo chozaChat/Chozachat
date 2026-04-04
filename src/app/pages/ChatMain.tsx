@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { supabase } from "../../lib/supabase";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
@@ -13,9 +13,15 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
-import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash } from "lucide-react";
+import { ProfilePanel } from "../components/ProfilePanel";
+import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
+import { useBlur } from "../contexts/BlurContext";
+import { CustomPrompt } from "../components/CustomPrompt";
+import { StickerPicker } from "../components/StickerPicker";
+import { AnnouncementBanner } from "../components/AnnouncementBanner";
+import { motion, AnimatePresence } from "motion/react";
 
 const COMMON_EMOJIS = [
   "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "���", "🙃",
@@ -106,7 +112,9 @@ interface Channel {
   creatorId?: string;
   emoji?: string;
   members?: string[];
+  admins?: string[];
   type?: string;
+  verified?: boolean;
 }
 
 interface Message {
@@ -121,12 +129,22 @@ interface Message {
 export default function ChatMain() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const { blurStrength, setBlurStrength } = useBlur();
+  
+  // Helper to generate blur classes
+  const getBlurClasses = (lightBg: string, darkBg: string) => {
+    if (blurStrength === 0) {
+      return `${lightBg} ${darkBg}`;
+    }
+    return `${lightBg}/60 ${darkBg}/60 backdrop-blur-[${blurStrength}px]`;
+  };
+  
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
-  const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news' | 'channel', id: string, name: string, friendData?: Friend } | null>(null);
+  const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news' | 'channel', id: string, name: string, friendData?: Friend, admins?: string[], verified?: boolean } | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<(User | Channel)[]>([]);
@@ -148,6 +166,9 @@ export default function ChatMain() {
   const [editTagColor, setEditTagColor] = useState("");
   const [editEmoji, setEditEmoji] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [isAiTyping, setIsAiTyping] = useState(false);
+  const [aiTypingText, setAiTypingText] = useState("");
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [editGroupName, setEditGroupName] = useState("");
   const [editGroupEmoji, setEditGroupEmoji] = useState("");
@@ -163,14 +184,25 @@ export default function ChatMain() {
   const [newPassword, setNewPassword] = useState("");
   const [friendRequestsOpen, setFriendRequestsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [addMembersGroup, setAddMembersGroup] = useState<Group | null>(null);
   const [selectedMembersToAdd, setSelectedMembersToAdd] = useState<string[]>([]);
   const [totalUsers, setTotalUsers] = useState<number>(0);
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  const [profilePanelData, setProfilePanelData] = useState<{ type: 'user' | 'group' | 'channel', data: any } | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
-  const [adminTab, setAdminTab] = useState<'users' | 'settings' | 'troll'>('users');
+  const [adminTab, setAdminTab] = useState<'users' | 'settings' | 'troll' | 'announcements' | 'channels'>('users');
+  const [selectedChannelsForDelete, setSelectedChannelsForDelete] = useState<string[]>([]);
+  const [allChannelsForAdmin, setAllChannelsForAdmin] = useState<Channel[]>([]);
+  const [channelSearchQuery, setChannelSearchQuery] = useState("");
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementDescription, setAnnouncementDescription] = useState('');
+  const [currentAnnouncement, setCurrentAnnouncement] = useState<any>(null);
+  const [showAnnouncementBanner, setShowAnnouncementBanner] = useState(false);
   const [moderatorPanelOpen, setModeratorPanelOpen] = useState(false);
   const [moderatorSearchQuery, setModeratorSearchQuery] = useState("");
+  const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
   const [moderatorSearchResults, setModeratorSearchResults] = useState<User[]>([]);
   const [selectedUserForMod, setSelectedUserForMod] = useState<User | null>(null);
   const [friendEmail, setFriendEmail] = useState("");
@@ -178,6 +210,46 @@ export default function ChatMain() {
   const [trollChannelConnected, setTrollChannelConnected] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
+  
+  // Custom prompts
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptConfig, setPromptConfig] = useState<{
+    title: string;
+    description?: string;
+    placeholder?: string;
+    defaultValue?: string;
+    type?: 'text' | 'password';
+    multiline?: boolean;
+    onConfirm: (value: string) => void;
+  }>({
+    title: '',
+    onConfirm: () => {}
+  });
+  
+  // Sticker picker
+  const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
+  
+  // Initial loading state
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  // Generate floating logos once using useMemo
+  const floatingLogos = useMemo(() => {
+    return [...Array(8)].map((_, i) => {
+      // Random starting position
+      const startX = Math.random() * 90 + 5; // 5-95%
+      const startY = Math.random() * 90 + 5; // 5-95%
+      
+      // Random ending position (anywhere on screen)
+      const endX = Math.random() * 90 + 5; // 5-95%
+      const endY = Math.random() * 90 + 5; // 5-95%
+      
+      const scale = 0.5 + Math.random() * 1.5;
+      const duration = 15 + Math.random() * 10;
+      const delay = Math.random() * 5; // Random start delay
+      
+      return { id: `logo-${i}`, startX, startY, endX, endY, scale, duration, delay };
+    });
+  }, []); // Empty dependency array means this only runs once
 
   // Refs for Realtime channels
   const messageChannelRef = useRef<any>(null);
@@ -188,6 +260,20 @@ export default function ChatMain() {
   
   // SERVER ID
   const SERVER_ID = 'make-server-a1c86d03';
+  
+  // FRONTEND VERSION FOR DEBUGGING
+  const FRONTEND_VERSION = 'v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS';
+  
+  // Helper function to check if a message is just a sticker (emoji only, no other text)
+  const isOnlySticker = (text: string) => {
+    if (!text) return false;
+    // Remove all emoji characters and check if anything is left
+    const withoutEmojis = text.replace(/[\p{Emoji}\p{Emoji_Presentation}\p{Emoji_Modifier}\p{Emoji_Component}]/gu, '').trim();
+    // Count emojis (roughly)
+    const emojiCount = (text.match(/[\p{Emoji}\p{Emoji_Presentation}]/gu) || []).length;
+    // It's a sticker if: only emojis, no other text, and 1-3 emojis
+    return withoutEmojis === '' && emojiCount >= 1 && emojiCount <= 3;
+  };
   
   // Helper function to check if user is admin
   const isUserAdmin = (user?: User | null) => {
@@ -321,6 +407,12 @@ export default function ChatMain() {
   };
 
   useEffect(() => {
+    console.log('🎯��🎯 CHATMAIN MOUNTED - FRONTEND VERSION:', FRONTEND_VERSION);
+    console.log('🎯 SERVER_ID:', SERVER_ID);
+    console.log('🎯 projectId:', projectId);
+    console.log('🎯 publicAnonKey length:', publicAnonKey?.length || 'MISSING');
+    console.log('🎯 CLIENT_ONLY_MODE:', CLIENT_ONLY_MODE);
+    
     const checkSession = async () => {
       // Check if we have a saved session
       const { data: { session } } = await supabase.auth.getSession();
@@ -370,16 +462,18 @@ export default function ChatMain() {
         console.log("=== SERVER VERSION CHECK ===");
         console.log("Server version:", data.version);
         console.log("Server timestamp:", data.timestamp);
-        console.log("Expected version: 2024-03-25-v17-channels-consolidation");
+        console.log("Expected version: 2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS");
         
         if (!data.version) {
-          console.warn("WARNING: Server did not return version info. Server may not be deployed.");
+          console.warn("⚠️ WARNING: Server did not return version info. Server may not be deployed.");
           console.warn("Response data:", data);
-        } else if (data.version !== "2024-03-25-v17-channels-consolidation") {
-          console.warn("WARNING: Server version mismatch! Old code might be running.");
-          console.warn("Current version:", data.version);
+        } else if (data.version !== "2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS") {
+          console.warn("⚠️ WARNING: Server version mismatch! Old code might be running.");
+          console.warn("⚠️ Current version:", data.version);
+          toast.error(`Server version mismatch! Expected v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS, got ${data.version}`, { duration: 10000 });
         } else {
           console.log("✓ Server version is correct!");
+          // Success toast removed - only show errors
         }
       } catch (err) {
         console.error("Failed to check server version:", err);
@@ -388,12 +482,34 @@ export default function ChatMain() {
     };
     
     checkServerVersion();
-    loadCurrentUser();
-    loadFriends();
-    loadChannels();
-    loadFriendRequests();
-    loadStats();
-    updateLastActive();
+    
+    // Load initial data - finish when data loads or after 3 seconds max
+    const loadInitialData = async () => {
+      const startTime = Date.now();
+      const maxLoadTime = 3000; // 3 seconds max
+      
+      // Load all data in parallel
+      await Promise.all([
+        loadCurrentUser(),
+        loadFriends(),
+        loadChannels(),
+        loadFriendRequests(),
+        loadStats(),
+        updateLastActive(),
+        loadAllUsers()
+      ]);
+      
+      // Calculate remaining time to reach minimum of 3 seconds if needed
+      const elapsed = Date.now() - startTime;
+      const remainingTime = Math.max(0, Math.min(500, maxLoadTime - elapsed));
+      
+      // Wait for remaining time then hide loading screen
+      setTimeout(() => {
+        setInitialLoading(false);
+      }, remainingTime);
+    };
+    
+    loadInitialData();
     
     // Check notification permission on mount
     if ("Notification" in window) {
@@ -440,7 +556,8 @@ export default function ChatMain() {
       loadFriendRequests();
       loadStats();
       updateLastActive();
-    }, 5000); // Check every 5 seconds instead of 2
+      checkUnreadMessages();
+    }, 10000); // Check every 10 seconds
 
     return () => {
       if (messageChannelRef.current) {
@@ -568,12 +685,14 @@ export default function ChatMain() {
         }
       })
       .subscribe((status: string) => {
-        console.log('[Troll] Channel subscription status:', status);
         if (status === 'SUBSCRIBED') {
-          console.log('[Troll] Successfully subscribed to troll channel');
+          console.log('[Troll] ✓ Successfully subscribed to troll channel');
           setTrollChannelConnected(true);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[Troll] Channel connection issue:', status);
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('[Troll] Channel connection error:', status);
+          setTrollChannelConnected(false);
+        } else if (status === 'TIMED_OUT') {
+          // Silently handle timeout - this is normal with Supabase Realtime
           setTrollChannelConnected(false);
         } else if (status === 'CLOSED') {
           // Silently handle closed state - this is normal during cleanup
@@ -590,6 +709,84 @@ export default function ChatMain() {
       }
     };
   }, [userId]);
+
+  // Check for active announcements
+  useEffect(() => {
+    if (!userId) return;
+
+    const checkAnnouncement = async () => {
+      try {
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/announcement`,
+          {
+            headers: {
+              Authorization: `Bearer ${publicAnonKey}`,
+              'X-User-Id': userId || '',
+            },
+          }
+        );
+        const data = await response.json();
+        
+        if (data.announcement) {
+          setCurrentAnnouncement(data.announcement);
+          setShowAnnouncementBanner(true);
+        }
+      } catch (error) {
+        console.error('Failed to fetch announcement:', error);
+      }
+    };
+
+    checkAnnouncement();
+  }, [userId]);
+
+  // Fetch current announcement for admin panel
+  useEffect(() => {
+    if (!userId || !adminPanelOpen) return;
+
+    const fetchAdminAnnouncement = async () => {
+      try {
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement`,
+          {
+            headers: {
+              Authorization: `Bearer ${publicAnonKey}`,
+              'X-User-Id': userId || '',
+            },
+          }
+        );
+        const data = await response.json();
+        
+        if (data.announcement) {
+          setCurrentAnnouncement(data.announcement);
+        }
+      } catch (error) {
+        console.error('Failed to fetch admin announcement:', error);
+      }
+    };
+
+    fetchAdminAnnouncement();
+  }, [userId, adminPanelOpen]);
+
+  // Auto-scroll to bottom when messages change (important for mobile)
+  useEffect(() => {
+    if (messages.length > 0) {
+      // Find the ScrollArea viewport (Radix UI specific)
+      const scrollViewport = messagesEndRef.current?.parentElement?.parentElement;
+      if (scrollViewport && scrollViewport.hasAttribute('data-radix-scroll-area-viewport')) {
+        const isNearBottom = scrollViewport.scrollHeight - scrollViewport.scrollTop - scrollViewport.clientHeight < 150;
+        
+        if (isNearBottom) {
+          // Use requestAnimationFrame to ensure DOM is updated before scrolling
+          requestAnimationFrame(() => {
+            messagesEndRef.current?.scrollIntoView({ 
+              behavior: "smooth",
+              block: "end"
+            });
+          });
+        }
+      }
+    }
+  }, [messages]);
 
   const loadCurrentUser = async () => {
     try {
@@ -703,8 +900,15 @@ export default function ChatMain() {
       }
       
       const data = await response.json();
+      console.log(`🔍 [loadChannels] Received ${data.channels?.length || 0} channels from server:`, data.channels);
       if (data.channels) {
         setChannels(data.channels);
+        // Log how many of each type
+        const channelTypes = data.channels.reduce((acc: any, ch: any) => {
+          acc[ch.type || 'unknown'] = (acc[ch.type || 'unknown'] || 0) + 1;
+          return acc;
+        }, {});
+        console.log(`📊 [loadChannels] Channel types breakdown:`, channelTypes);
       }
     } catch (error) {
       console.error("Failed to connect to CFS, failed to load channels: ConnectEID ", error);
@@ -716,6 +920,8 @@ export default function ChatMain() {
       console.log("Skipping loadMessages - no userId");
       return;
     }
+    
+    console.log(`🔍 [loadMessages] Loading messages for chatType: ${chatType}, chatId: ${chatId}`);
     
     try {
       // If it's news channel, use special news endpoint
@@ -737,6 +943,7 @@ export default function ChatMain() {
         
         const data = await response.json();
         if (data.messages) {
+          console.log(`✅ [loadMessages] Loaded ${data.messages.length} news messages`);
           setMessages(data.messages);
           setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
         }
@@ -760,7 +967,7 @@ export default function ChatMain() {
       }
       
       const data = await response.json();
-      console.log("Loaded messages for", chatType, chatId, ":", data);
+      console.log(`✅ [loadMessages] Loaded ${data.messages?.length || 0} messages for ${chatType}:${chatId}`);
       if (data.messages) {
         setMessages(data.messages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -812,6 +1019,152 @@ export default function ChatMain() {
     } catch (error) {
       console.error("Failed to load friend requests:", error);
       toast.error(`Failed to connect to CFS, failed to load friend requests: CEID ${error}`);
+    }
+  };
+
+  const checkUnreadMessages = async () => {
+    if (!userId) return;
+    
+    try {
+      const newUnread: Record<string, number> = {};
+      
+      // Check friends
+      for (const friend of friends) {
+        const chatId = [userId, friend.id].sort().join(":");
+        const lastRead = localStorage.getItem(`lastRead-friend-${chatId}`);
+        
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${chatId}`,
+            {
+              headers: { 
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId
+              },
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const messages = data.messages || [];
+            
+            if (lastRead && messages.length > 0) {
+              const unreadCount = messages.filter((m: any) => 
+                new Date(m.timestamp) > new Date(lastRead) && m.senderId !== userId
+              ).length;
+              
+              if (unreadCount > 0) {
+                newUnread[`friend-${chatId}`] = unreadCount;
+              }
+            }
+          }
+        } catch (error) {
+          // Silently skip errors for individual chats
+        }
+      }
+      
+      // Check groups
+      for (const group of channels.filter(c => c.type === 'group')) {
+        const lastRead = localStorage.getItem(`lastRead-group-${group.id}`);
+        
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${group.id}`,
+            {
+              headers: { 
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId
+              },
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const messages = data.messages || [];
+            
+            if (lastRead && messages.length > 0) {
+              const unreadCount = messages.filter((m: any) => 
+                new Date(m.timestamp) > new Date(lastRead) && m.senderId !== userId
+              ).length;
+              
+              if (unreadCount > 0) {
+                newUnread[`group-${group.id}`] = unreadCount;
+              }
+            }
+          }
+        } catch (error) {
+          // Silently skip errors
+        }
+      }
+      
+      // Check channels
+      for (const channel of channels.filter(c => c.type === 'channel')) {
+        const lastRead = localStorage.getItem(`lastRead-channel-${channel.id}`);
+        
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${channel.id}`,
+            {
+              headers: { 
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId
+              },
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const messages = data.messages || [];
+            
+            if (lastRead && messages.length > 0) {
+              const unreadCount = messages.filter((m: any) => 
+                new Date(m.timestamp) > new Date(lastRead) && m.senderId !== userId
+              ).length;
+              
+              if (unreadCount > 0) {
+                newUnread[`channel-${channel.id}`] = unreadCount;
+              }
+            }
+          }
+        } catch (error) {
+          // Silently skip errors
+        }
+      }
+      
+      // Check news
+      const lastReadNews = localStorage.getItem('lastRead-news');
+      try {
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/news`,
+          {
+            headers: { 
+              Authorization: `Bearer ${publicAnonKey}`,
+              'X-User-Id': userId
+            },
+          }
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          const messages = data.messages || [];
+          
+          if (lastReadNews && messages.length > 0) {
+            const unreadCount = messages.filter((m: any) => 
+              new Date(m.timestamp) > new Date(lastReadNews)
+            ).length;
+            
+            if (unreadCount > 0) {
+              newUnread['news'] = unreadCount;
+            }
+          }
+        }
+      } catch (error) {
+        // Silently skip errors
+      }
+      
+      setUnreadMessages(newUnread);
+    } catch (error) {
+      console.error("Error checking unread messages:", error);
     }
   };
 
@@ -944,8 +1297,17 @@ export default function ChatMain() {
   const handleAddFriend = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const url = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/request`;
+      console.log('🔵 [ADD FRIEND] ===== STARTING =====');
+      console.log('🔵 [ADD FRIEND] URL:', url);
+      console.log('🔵 [ADD FRIEND] SERVER_ID:', SERVER_ID);
+      console.log('🔵 [ADD FRIEND] friendEmail:', friendEmail);
+      console.log('🔵 [ADD FRIEND] userId:', userId);
+      console.log('🔵 [ADD FRIEND] projectId:', projectId);
+      console.log('🔵 [ADD FRIEND] publicAnonKey:', publicAnonKey ? 'Present (length: ' + publicAnonKey.length + ')' : 'MISSING');
+      
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/request`,
+        url,
         {
           method: "POST",
           headers: {
@@ -956,17 +1318,32 @@ export default function ChatMain() {
           body: JSON.stringify({ friendEmail }),
         }
       );
+      
+      console.log('🔵 [ADD FRIEND] Response status:', response.status);
+      console.log('🔵 [ADD FRIEND] Response OK:', response.ok);
+      console.log('🔵 [ADD FRIEND] Response statusText:', response.statusText);
+      console.log('🔵 [ADD FRIEND] Response URL:', response.url);
+      console.log('🔵 [ADD FRIEND] Response type:', response.type);
 
       let data;
       try {
         const text = await response.text();
+        console.log("=== FRIEND REQUEST RESPONSE DEBUG ===");
         console.log("Raw response text:", JSON.stringify(text));
-        console.log("Response text first 50 chars:", text.substring(0, 50));
-        console.log("Response text char codes:", Array.from(text.substring(0, 20)).map(c => c.charCodeAt(0)));
+        console.log("Response text first 100 chars:", text.substring(0, 100));
+        console.log("Response text last 100 chars:", text.substring(text.length - 100));
+        console.log("Response text length:", text.length);
+        console.log("Response headers:", Object.fromEntries(response.headers.entries()));
+        console.log("Content-Type header:", response.headers.get('content-type'));
+        console.log("=== CHECKING FOR 'Route not found' ===");
+        console.log("Text includes 'Route not found':", text.includes('Route not found'));
+        console.log("Text includes 'route not found' (lowercase):", text.toLowerCase().includes('route not found'));
+        console.log("=== END DEBUG ===");
         data = JSON.parse(text);
+        console.log("Parsed data:", data);
       } catch (jsonError) {
         console.error("Failed to parse JSON response:", jsonError);
-        toast.error("Server error: Invalid response");
+        toast.error("Check console for response details");
         return;
       }
       
@@ -991,7 +1368,7 @@ export default function ChatMain() {
     e.preventDefault();
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups`,
         {
           method: "POST",
           headers: {
@@ -1221,7 +1598,9 @@ export default function ChatMain() {
       const data = await response.json();
       if (response.ok) {
         // Backend returns { users, channels }
-        const results = [...(data.users || []), ...(data.channels || [])];
+        // Filter out groups (type === 'group'), only show channels (type === 'channel')
+        const filteredChannels = (data.channels || []).filter((ch: any) => ch.type === 'channel');
+        const results = [...(data.users || []), ...filteredChannels];
         setSearchResults(results);
       } else {
         console.error("Search failed:", data);
@@ -1233,10 +1612,10 @@ export default function ChatMain() {
     }
   };
 
-  const handleAddFriendFromSearch = async (friendId: string) => {
+  const handleAddFriendFromSearch = async (friendEmail: string) => {
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/request`,
         {
           method: "POST",
           headers: {
@@ -1244,7 +1623,7 @@ export default function ChatMain() {
             Authorization: `Bearer ${publicAnonKey}`,
             'X-User-Id': userId || '',
           },
-          body: JSON.stringify({ friendId }),
+          body: JSON.stringify({ friendEmail }),
         }
       );
 
@@ -1291,13 +1670,136 @@ export default function ChatMain() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim() || !selectedChat) return;
+    if (!messageText.trim() || !selectedChat || !userId) return;
+
+    const messageContent = messageText;
+    const tempId = `temp-${Date.now()}`;
+    
+    // Optimistically add message to UI immediately
+    const optimisticMessage: Message = {
+      id: tempId,
+      senderId: userId,
+      content: messageContent,
+      timestamp: new Date().toISOString()
+    };
+    
+    setMessages(prev => [...prev, optimisticMessage]);
+    setMessageText("");
 
     try {
+      // If it's AI chat, call Gemini API
+      if (selectedChat.type === 'ai') {
+        // Get API key (user's personal key or admin's global key)
+        const userApiKey = localStorage.getItem(`geminiApiKey_${userId}`);
+        
+        // Load global API key from Supabase settings
+        let globalApiKey = '';
+        try {
+          const settingsResponse = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/settings`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                "X-User-Id": userId,
+              },
+            }
+          );
+          if (settingsResponse.ok) {
+            const settingsData = await settingsResponse.json();
+            globalApiKey = settingsData.settings?.geminiApiKey || '';
+          }
+        } catch (error) {
+          console.log('Could not load global API key from settings');
+        }
+        
+        const apiKey = userApiKey || globalApiKey || '';
+        
+        if (!apiKey) {
+          toast.error('No Gemini API key configured. Please set one in Settings.');
+          setMessages(prev => prev.filter(m => m.id !== tempId));
+          setMessageText(messageContent);
+          return;
+        }
+
+        // Replace temp message with actual user message first
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...optimisticMessage, id: tempId + '-user' } : m));
+
+        // Add empty AI message to show "Generating response..." shimmer
+        const aiMessageId = `ai-${Date.now()}`;
+        const aiMessage: Message = {
+          id: aiMessageId,
+          senderId: 'ai-assistant',
+          content: '',
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, aiMessage]);
+
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                contents: [{
+                  parts: [{
+                    text: messageContent
+                  }]
+                }]
+              })
+            }
+          );
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            toast.error(errorData.error?.message || 'Failed to get AI response');
+            setMessages(prev => prev.filter(m => m.id === aiMessageId || m.id === tempId + '-user'));
+            setMessageText(messageContent);
+            return;
+          }
+
+          const data = await response.json();
+          const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.';
+
+          // Start typewriter effect
+          setIsAiTyping(true);
+          setAiTypingText("");
+
+          // Typewriter effect
+          let currentIndex = 0;
+          const typingInterval = setInterval(() => {
+            if (currentIndex < aiResponse.length) {
+              const nextChar = aiResponse[currentIndex];
+              setAiTypingText(prev => prev + nextChar);
+              setMessages(prev => prev.map(m => 
+                m.id === aiMessageId ? { ...m, content: aiResponse.substring(0, currentIndex + 1) } : m
+              ));
+              currentIndex++;
+            } else {
+              clearInterval(typingInterval);
+              setIsAiTyping(false);
+              setAiTypingText("");
+            }
+          }, 15); // 15ms per character for smooth typing
+          
+        } catch (error) {
+          console.error('AI API error:', error);
+          toast.error('Failed to connect to AI');
+          setMessages(prev => prev.filter(m => m.id === aiMessageId || m.id === tempId + '-user'));
+          setMessageText(messageContent);
+        }
+        return;
+      }
+
       // If it's news channel, use news endpoint (admin only)
       if (selectedChat.type === 'news') {
         if (currentUser?.email !== 'mikhail02323@gmail.com') {
           toast.error("Only admin can post to news channel");
+          // Remove optimistic message on error
+          setMessages(prev => prev.filter(m => m.id !== tempId));
+          setMessageText(messageContent);
           return;
         }
 
@@ -1310,18 +1812,22 @@ export default function ChatMain() {
               Authorization: `Bearer ${publicAnonKey}`,
               'X-User-Id': userId || '',
             },
-            body: JSON.stringify({ content: messageText }),
+            body: JSON.stringify({ content: messageContent }),
           }
         );
 
         if (!response.ok) {
           const data = await response.json();
           toast.error(data.error || "Failed to send news");
+          // Remove optimistic message on error
+          setMessages(prev => prev.filter(m => m.id !== tempId));
+          setMessageText(messageContent);
           return;
         }
 
-        setMessageText("");
-        loadMessages('news', 'news');
+        const data = await response.json();
+        // Replace temp message with real message from server
+        setMessages(prev => prev.map(m => m.id === tempId ? data.message : m));
         
         // Broadcast new news message via Realtime using existing channel
         if (messageChannelRef.current) {
@@ -1347,7 +1853,7 @@ export default function ChatMain() {
           },
           body: JSON.stringify({
             chatId: selectedChat.id,
-            content: messageText,
+            content: messageContent,
             chatType: selectedChat.type,
           }),
         }
@@ -1357,12 +1863,17 @@ export default function ChatMain() {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         console.error("Failed to send message:", response.status, errorData);
         toast.error(errorData.error || "Failed to send message");
+        // Remove optimistic message on error
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        setMessageText(messageContent);
         return;
       }
 
+      const data = await response.json();
       console.log("Message sent successfully");
-      setMessageText("");
-      loadMessages(selectedChat.type, selectedChat.id);
+      
+      // Replace temp message with real message from server
+      setMessages(prev => prev.map(m => m.id === tempId ? data.message : m));
       
       // Broadcast new message via Realtime using existing channel
       if (messageChannelRef.current) {
@@ -1375,6 +1886,9 @@ export default function ChatMain() {
     } catch (error) {
       console.error("Send message error:", error);
       toast.error("Failed to send message");
+      // Remove optimistic message on error
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      setMessageText(messageContent);
     }
   };
 
@@ -1403,6 +1917,16 @@ export default function ChatMain() {
     // Set the selected chat with friend info
     setSelectedChat({ type: 'friend', id: chatId, name: friend.name, friendData: friend });
     
+    // Clear unread messages for this chat
+    setUnreadMessages(prev => {
+      const newUnread = { ...prev };
+      delete newUnread[`friend-${chatId}`];
+      return newUnread;
+    });
+    
+    // Store last read timestamp
+    localStorage.setItem(`lastRead-friend-${chatId}`, new Date().toISOString());
+    
     // Load messages for this chat
     loadMessages('friend', chatId);
   };
@@ -1416,6 +1940,16 @@ export default function ChatMain() {
     // Set the selected chat
     setSelectedChat({ type: 'group', id: group.id, name: group.name });
     
+    // Clear unread messages for this chat
+    setUnreadMessages(prev => {
+      const newUnread = { ...prev };
+      delete newUnread[`group-${group.id}`];
+      return newUnread;
+    });
+    
+    // Store last read timestamp
+    localStorage.setItem(`lastRead-group-${group.id}`, new Date().toISOString());
+    
     // Load messages for this chat
     loadMessages('group', group.id);
   };
@@ -1426,48 +1960,104 @@ export default function ChatMain() {
     // Clear messages immediately when switching chats
     setMessages([]);
     
-    // Set the selected chat
-    setSelectedChat({ type: 'channel', id: channel.id, name: channel.name });
+    // Set the selected chat - include admins and verified status
+    setSelectedChat({ 
+      type: 'channel', 
+      id: channel.id, 
+      name: channel.name,
+      admins: channel.admins || [],
+      verified: channel.verified || false
+    });
+    
+    // Clear unread messages for this chat
+    setUnreadMessages(prev => {
+      const newUnread = { ...prev };
+      delete newUnread[`channel-${channel.id}`];
+      return newUnread;
+    });
+    
+    // Store last read timestamp
+    localStorage.setItem(`lastRead-channel-${channel.id}`, new Date().toISOString());
     
     // Load messages for this chat
     loadMessages('channel', channel.id);
+  };
+
+  const loadChannelDetails = async (channelId: string) => {
+    if (!userId) return null;
+    
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${channelId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        console.error('Failed to load channel details:', response.status);
+        return null;
+      }
+      
+      const data = await response.json();
+      console.log('📋 Loaded channel details:', data.channel);
+      return data.channel;
+    } catch (error) {
+      console.error('Error loading channel details:', error);
+      return null;
+    }
   };
 
   const getSenderName = (senderId: string) => {
     if (senderId === userId) return "You";
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend.name;
+    const user = allUsers.find(u => u.id === senderId);
+    if (user) return user.name;
     return "Unknown";
   };
 
   const getSenderEmoji = (senderId: string) => {
     if (senderId === userId) return currentUser?.emoji;
     const friend = friends.find(f => f.id === senderId);
-    return friend?.emoji;
+    if (friend) return friend?.emoji;
+    const user = allUsers.find(u => u.id === senderId);
+    return user?.emoji;
   };
 
   const getSenderTag = (senderId: string) => {
     if (senderId === userId) return currentUser?.tag;
     const friend = friends.find(f => f.id === senderId);
-    return friend?.tag;
+    if (friend) return friend?.tag;
+    const user = allUsers.find(u => u.id === senderId);
+    return user?.tag;
   };
 
   const getSenderTagColor = (senderId: string) => {
     if (senderId === userId) return currentUser?.tagColor;
     const friend = friends.find(f => f.id === senderId);
-    return friend?.tagColor;
+    if (friend) return friend?.tagColor;
+    const user = allUsers.find(u => u.id === senderId);
+    return user?.tagColor;
   };
 
   const getSenderIsAdmin = (senderId: string) => {
     if (senderId === userId) return isUserAdmin(currentUser);
     const friend = friends.find(f => f.id === senderId);
-    return isUserAdmin(friend);
+    if (friend) return isUserAdmin(friend);
+    const user = allUsers.find(u => u.id === senderId);
+    return isUserAdmin(user);
   };
 
   const getSenderIsVerified = (senderId: string) => {
     if (senderId === userId) return currentUser?.verified;
     const friend = friends.find(f => f.id === senderId);
-    return friend?.verified;
+    if (friend) return friend?.verified;
+    const user = allUsers.find(u => u.id === senderId);
+    return user?.verified;
   };
 
   const toggleFriendForGroup = (friendId: string) => {
@@ -1480,8 +2070,15 @@ export default function ChatMain() {
 
   const handleAcceptFriendRequest = async (requesterId: string) => {
     try {
+      const url = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/accept`;
+      console.log('🔵 [ACCEPT FRIEND] ===== STARTING =====');
+      console.log('🔵 [ACCEPT FRIEND] URL:', url);
+      console.log('🔵 [ACCEPT FRIEND] SERVER_ID:', SERVER_ID);
+      console.log('🔵 [ACCEPT FRIEND] requesterId:', requesterId);
+      console.log('🔵 [ACCEPT FRIEND] userId:', userId);
+      
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/accept`,
+        url,
         {
           method: "POST",
           headers: {
@@ -1493,25 +2090,39 @@ export default function ChatMain() {
         }
       );
 
+      console.log('🔵 [ACCEPT FRIEND] Response status:', response.status);
+      console.log('🔵 [ACCEPT FRIEND] Response OK:', response.ok);
+      
       const data = await response.json();
+      console.log('🔵 [ACCEPT FRIEND] Response data:', data);
+      
       if (!response.ok) {
+        console.error('🔴 [ACCEPT FRIEND] ERROR:', data.error);
         toast.error(data.error || "Failed to accept friend request");
         return;
       }
 
+      console.log('🟢 [ACCEPT FRIEND] SUCCESS!');
       toast.success("Friend request accepted!");
       loadFriendRequests();
       loadFriends();
     } catch (error) {
-      console.error("Accept friend request error:", error);
+      console.error("🔴 [ACCEPT FRIEND] EXCEPTION:", error);
       toast.error("Failed to accept friend request");
     }
   };
 
   const handleDeclineFriendRequest = async (requesterId: string) => {
     try {
+      const url = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/reject`;
+      console.log('🔵 [REJECT FRIEND] ===== STARTING =====');
+      console.log('🔵 [REJECT FRIEND] URL:', url);
+      console.log('🔵 [REJECT FRIEND] SERVER_ID:', SERVER_ID);
+      console.log('🔵 [REJECT FRIEND] requesterId:', requesterId);
+      console.log('🔵 [REJECT FRIEND] userId:', userId);
+      
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/decline`,
+        url,
         {
           method: "POST",
           headers: {
@@ -1523,24 +2134,38 @@ export default function ChatMain() {
         }
       );
 
+      console.log('🔵 [REJECT FRIEND] Response status:', response.status);
+      console.log('🔵 [REJECT FRIEND] Response OK:', response.ok);
+      
       const data = await response.json();
+      console.log('🔵 [REJECT FRIEND] Response data:', data);
+      
       if (!response.ok) {
+        console.error('🔴 [REJECT FRIEND] ERROR:', data.error);
         toast.error(data.error || "Failed to decline friend request");
         return;
       }
 
+      console.log('🟢 [REJECT FRIEND] SUCCESS!');
       toast.success("Friend request declined!");
       loadFriendRequests();
     } catch (error) {
-      console.error("Decline friend request error:", error);
+      console.error("🔴 [REJECT FRIEND] EXCEPTION:", error);
       toast.error("Failed to decline friend request");
     }
   };
 
   const handleRemoveFriend = async (friendId: string) => {
     try {
+      const url = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/remove`;
+      console.log('🔵 [REMOVE FRIEND] ===== STARTING =====');
+      console.log('🔵 [REMOVE FRIEND] URL:', url);
+      console.log('🔵 [REMOVE FRIEND] SERVER_ID:', SERVER_ID);
+      console.log('🔵 [REMOVE FRIEND] friendId:', friendId);
+      console.log('🔵 [REMOVE FRIEND] userId:', userId);
+      
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends/remove`,
+        url,
         {
           method: "POST",
           headers: {
@@ -1552,19 +2177,26 @@ export default function ChatMain() {
         }
       );
 
+      console.log('🔵 [REMOVE FRIEND] Response status:', response.status);
+      console.log('🔵 [REMOVE FRIEND] Response OK:', response.ok);
+      
       const data = await response.json();
+      console.log('🔵 [REMOVE FRIEND] Response data:', data);
+      
       if (!response.ok) {
+        console.error('🔴 [REMOVE FRIEND] ERROR:', data.error);
         toast.error(data.error || "Failed to remove friend");
         return;
       }
 
+      console.log('🟢 [REMOVE FRIEND] SUCCESS!');
       toast.success("Friend removed!");
       loadFriends();
       if (selectedChat?.type === 'friend' && selectedChat.id.includes(friendId)) {
         setSelectedChat(null);
       }
     } catch (error) {
-      console.error("Remove friend error:", error);
+      console.error("🔴 [REMOVE FRIEND] EXCEPTION:", error);
       toast.error("Failed to remove friend");
     }
   };
@@ -1572,10 +2204,17 @@ export default function ChatMain() {
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Save Gemini API key to localStorage (personal setting)
+      if (geminiApiKey) {
+        localStorage.setItem(`geminiApiKey_${userId}`, geminiApiKey);
+      } else {
+        localStorage.removeItem(`geminiApiKey_${userId}`);
+      }
+
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/update`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user`,
         {
-          method: "POST",
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${publicAnonKey}`,
@@ -1584,6 +2223,15 @@ export default function ChatMain() {
           body: JSON.stringify({ name: editName, username: editUsername, tag: editTag, tagColor: editTagColor, emoji: editEmoji }),
         }
       );
+
+      // Check if response is JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+        toast.error("Server error - invalid response format");
+        return;
+      }
 
       const data = await response.json();
       if (!response.ok) {
@@ -1676,10 +2324,88 @@ export default function ChatMain() {
     }
   };
 
+  // Show loading screen while initial data loads
+  if (initialLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-white dark:bg-gray-950 relative overflow-hidden">
+        {/* Animated floating logos in background */}
+        <div className="absolute inset-0 overflow-hidden">
+          {floatingLogos.map((logo) => (
+            <motion.div
+              key={logo.id}
+              className="absolute text-blue-500/10 dark:text-blue-400/5"
+              animate={{
+                left: [`${logo.startX}%`, `${logo.endX}%`, `${logo.startX}%`],
+                top: [`${logo.startY}%`, `${logo.endY}%`, `${logo.startY}%`],
+                scale: logo.scale,
+                opacity: [0.3, 0.6, 0.3]
+              }}
+              transition={{
+                duration: logo.duration,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: logo.delay
+              }}
+            >
+              <MessageCircle className="w-24 h-24" />
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Main content */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center space-y-6 relative z-10"
+        >
+          <motion.div
+            animate={{ 
+              scale: [1, 1.1, 1]
+            }}
+            transition={{ 
+              duration: 2,
+              repeat: Infinity,
+              ease: "easeInOut"
+            }}
+            className="w-24 h-24 mx-auto"
+          >
+            <MessageCircle className="w-full h-full text-blue-600 dark:text-blue-400 drop-shadow-lg" />
+          </motion.div>
+          <div className="space-y-2">
+            <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
+              ChozaChat
+            </h1>
+            <p className="text-gray-600 dark:text-gray-400 text-lg">Loading your conversations...</p>
+          </div>
+          <div className="flex gap-2 justify-center mt-4">
+            <motion.div
+              className="w-3 h-3 bg-blue-500 rounded-full"
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 0.6, repeat: Infinity, delay: 0 }}
+            />
+            <motion.div
+              className="w-3 h-3 bg-purple-500 rounded-full"
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 0.6, repeat: Infinity, delay: 0.1 }}
+            />
+            <motion.div
+              className="w-3 h-3 bg-pink-500 rounded-full"
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }}
+            />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
-    <div className="size-full flex bg-gray-50 dark:bg-gray-950">
+    <div className="h-full w-full flex overflow-hidden bg-gray-50 dark:bg-gray-950">
       {/* Sidebar - Hidden on mobile when chat is selected */}
-      <div className={`w-full md:w-80 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col ${selectedChat ? 'hidden md:flex' : 'flex'}`}>
+      <div 
+        className={`w-full md:w-80 ${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'} border-r border-gray-200 dark:border-gray-800 flex flex-col h-full ${selectedChat ? 'hidden md:flex' : 'flex'}`}
+        style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+      >
         <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             <Sheet open={sideMenuOpen} onOpenChange={setSideMenuOpen}>
@@ -1688,21 +2414,27 @@ export default function ChatMain() {
                   <Menu className="size-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-80 dark:bg-gray-900 dark:border-gray-800">
+              <SheetContent 
+                side="left" 
+                className={`w-80 ${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'} dark:border-gray-800`}
+                style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+              >
                 <SheetHeader>
                   <SheetTitle className="dark:text-white">Menu</SheetTitle>
                   <SheetDescription className="dark:text-gray-400">Access settings and options</SheetDescription>
                 </SheetHeader>
                 <div className="mt-6 space-y-4">
                   {/* Theme Toggle */}
-                  <Button 
-                    variant="outline" 
-                    className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800"
-                    onClick={toggleTheme}
-                  >
-                    {theme === 'light' ? <Moon className="size-5 mr-2" /> : <Sun className="size-5 mr-2" />}
-                    {theme === 'light' ? 'Dark' : 'Light'} Mode
-                  </Button>
+                  <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                    <Button 
+                      variant="outline" 
+                      className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800"
+                      onClick={toggleTheme}
+                    >
+                      {theme === 'light' ? <Moon className="size-5 mr-2" /> : <Sun className="size-5 mr-2" />}
+                      {theme === 'light' ? 'Dark' : 'Light'} Mode
+                    </Button>
+                  </motion.div>
 
                   {/* Settings Button */}
                   <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -1717,13 +2449,23 @@ export default function ChatMain() {
                           setEditTagColor(currentUser?.tagColor || "");
                           setEditEmoji(currentUser?.emoji || "");
                           setShowEmojiPicker(false);
+                          // Load user's personal Gemini API key
+                          const userGeminiKey = localStorage.getItem(`geminiApiKey_${userId}`);
+                          if (userGeminiKey) {
+                            setGeminiApiKey(userGeminiKey);
+                          } else {
+                            setGeminiApiKey("");
+                          }
                         }}
                       >
                         <Settings className="size-5 mr-2" />
                         Settings
                       </Button>
                     </DialogTrigger>
-              <DialogContent>
+              <DialogContent 
+                className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+                style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+              >
                 <DialogHeader>
                   <DialogTitle>Edit Profile</DialogTitle>
                   <DialogDescription>Update your name and username</DialogDescription>
@@ -1849,9 +2591,11 @@ export default function ChatMain() {
                           <ScrollArea className="h-48 border rounded-md p-2">
                             <div className="grid grid-cols-8 gap-1">
                               {COMMON_EMOJIS.map((emoji, idx) => (
-                                <button
+                                <motion.button
                                   key={idx}
                                   type="button"
+                                  whileHover={{ scale: 1.2 }}
+                                  whileTap={{ scale: 0.9 }}
                                   className="text-2xl hover:bg-gray-100 rounded p-1 cursor-pointer"
                                   onClick={() => {
                                     setEditEmoji(emoji);
@@ -1859,7 +2603,7 @@ export default function ChatMain() {
                                   }}
                                 >
                                   {emoji}
-                                </button>
+                                </motion.button>
                               ))}
                             </div>
                           </ScrollArea>
@@ -1899,6 +2643,55 @@ export default function ChatMain() {
                         )}
                       </div>
                     </div>
+
+                    {/* Blur Effects Strength */}
+                    <div className="p-3 border rounded-lg dark:border-gray-700 space-y-3">
+                      <div className="flex flex-col">
+                        <Label htmlFor="blurStrength">Blur Strength</Label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Adjust glassmorphic blur effect (0 = disabled)
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Input
+                          id="blurStrength"
+                          type="range"
+                          min="0"
+                          max="50"
+                          step="1"
+                          value={blurStrength}
+                          onChange={(e) => setBlurStrength(parseInt(e.target.value))}
+                          className="flex-1"
+                        />
+                        <div className="flex items-center gap-2 min-w-[80px]">
+                          <Input
+                            type="number"
+                            min="0"
+                            max="50"
+                            value={blurStrength}
+                            onChange={(e) => setBlurStrength(Math.max(0, Math.min(50, parseInt(e.target.value) || 0)))}
+                            className="w-16 text-center"
+                          />
+                          <span className="text-sm text-gray-600 dark:text-gray-400">px</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Gemini API Key */}
+                    <div>
+                      <Label htmlFor="geminiApiKey">Gemini API Key (Optional)</Label>
+                      <Input
+                        id="geminiApiKey"
+                        type="password"
+                        placeholder="Your personal Gemini API key"
+                        value={geminiApiKey}
+                        onChange={(e) => setGeminiApiKey(e.target.value)}
+                        className="mt-2"
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        Set your own Gemini API key to chat with AI. Leave empty to use the admin's global key.
+                      </p>
+                    </div>
                   </div>
                   <DialogFooter className="mt-4">
                     <Button type="submit">Save Changes</Button>
@@ -1921,7 +2714,10 @@ export default function ChatMain() {
                   Create Group
                 </Button>
               </DialogTrigger>
-              <DialogContent className="dark:bg-gray-900">
+              <DialogContent 
+                className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+                style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+              >
                 <DialogHeader>
                   <DialogTitle className="dark:text-white">Create Group</DialogTitle>
                   <DialogDescription>Create a new group chat</DialogDescription>
@@ -1967,9 +2763,11 @@ export default function ChatMain() {
                           <ScrollArea className="h-48 border rounded-lg p-2">
                             <div className="grid grid-cols-8 gap-1">
                               {COMMON_EMOJIS.map((emoji, idx) => (
-                                <button
+                                <motion.button
                                   key={idx}
                                   type="button"
+                                  whileHover={{ scale: 1.2 }}
+                                  whileTap={{ scale: 0.9 }}
                                   className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-800 rounded p-1 cursor-pointer"
                                   onClick={() => {
                                     setGroupEmoji(emoji);
@@ -1977,7 +2775,7 @@ export default function ChatMain() {
                                   }}
                                 >
                                   {emoji}
-                                </button>
+                                </motion.button>
                               ))}
                             </div>
                           </ScrollArea>
@@ -2036,7 +2834,10 @@ export default function ChatMain() {
                   Create Channel
                 </Button>
               </DialogTrigger>
-              <DialogContent className="dark:bg-gray-900">
+              <DialogContent 
+                className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+                style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+              >
                 <DialogHeader>
                   <DialogTitle className="dark:text-white">Create Channel</DialogTitle>
                   <DialogDescription>Create a new public channel</DialogDescription>
@@ -2096,9 +2897,11 @@ export default function ChatMain() {
                           <ScrollArea className="h-48 border rounded-lg p-2">
                             <div className="grid grid-cols-8 gap-1">
                               {COMMON_EMOJIS.map((emoji, idx) => (
-                                <button
+                                <motion.button
                                   key={idx}
                                   type="button"
+                                  whileHover={{ scale: 1.2 }}
+                                  whileTap={{ scale: 0.9 }}
                                   className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-800 rounded p-1 cursor-pointer"
                                   onClick={() => {
                                     setChannelEmoji(emoji);
@@ -2106,7 +2909,7 @@ export default function ChatMain() {
                                   }}
                                 >
                                   {emoji}
-                                </button>
+                                </motion.button>
                               ))}
                             </div>
                           </ScrollArea>
@@ -2136,15 +2939,15 @@ export default function ChatMain() {
             {currentUser?.emoji ? (
               <span className="text-2xl">{currentUser.emoji}</span>
             ) : (
-              currentUser?.name?.charAt(0).toUpperCase()
+              currentUser?.name?.charAt(0)?.toUpperCase() || '?'
             )}
           </AvatarFallback>
         </Avatar>
         <div>
           <div className="flex items-center gap-1.5">
-            <span className="font-semibold dark:text-white">{currentUser?.name}</span>
-            {currentUser?.verified && renderVerifiedBadge()}
-            {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor)}
+            <span key="name" className="font-semibold dark:text-white">{currentUser?.name}</span>
+            {currentUser?.verified && <span key="verified">{renderVerifiedBadge()}</span>}
+            {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor) && <span key="tag">{renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor)}</span>}
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400">@{currentUser?.username}</div>
         </div>
@@ -2204,7 +3007,7 @@ export default function ChatMain() {
                     ) : result.username ? (
                       <Hash className="size-4" />
                     ) : (
-                      result.name?.charAt(0).toUpperCase()
+                      result.name?.charAt(0)?.toUpperCase() || '?'
                     )}
                   </AvatarFallback>
                 </Avatar>
@@ -2214,15 +3017,15 @@ export default function ChatMain() {
                     @{result.username || result.email?.split('@')[0]}
                   </div>
                 </div>
-                {result.channelUsername ? (
+                {result.type === 'channel' || result.username ? (
                   <Button size="sm" onClick={() => handleJoinChannel(result.id)}>
                     Join
                   </Button>
-                ) : (
-                  <Button size="sm" onClick={() => handleAddFriendFromSearch(result.id)}>
+                ) : result.email ? (
+                  <Button size="sm" onClick={() => handleAddFriendFromSearch(result.email)}>
                     <UserPlus className="size-4" />
                   </Button>
-                )}
+                ) : null}
               </div>
             ))}
           </div>
@@ -2264,7 +3067,7 @@ export default function ChatMain() {
                         {request.requester.emoji ? (
                           <span className="text-2xl">{request.requester.emoji}</span>
                         ) : (
-                          request.requester.name.charAt(0).toUpperCase()
+                          request.requester.name?.charAt(0)?.toUpperCase() || '?'
                         )}
                       </AvatarFallback>
                     </Avatar>
@@ -2299,21 +3102,67 @@ export default function ChatMain() {
 
     <ScrollArea className="flex-1 px-2">
       {/* News Channel - Small and less noticeable */}
-      <button
+      <motion.button
+        whileHover={{ scale: 1.01, x: 2 }}
+        whileTap={{ scale: 0.98 }}
         onClick={() => {
           setMessages([]);
           setSelectedChat({ type: 'news', id: 'news', name: 'News Channel' });
+          // Clear unread messages for news
+          setUnreadMessages(prev => {
+            const newUnread = { ...prev };
+            delete newUnread['news'];
+            return newUnread;
+          });
+          localStorage.setItem('lastRead-news', new Date().toISOString());
           loadMessages('news', 'news');
         }}
-        className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 transition mb-3 border-b border-gray-100 ${
-          selectedChat?.type === 'news' ? 'bg-yellow-50' : ''
+        className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition mb-3 border-b border-gray-100 dark:border-gray-700 relative ${
+          selectedChat?.type === 'news' ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''
         }`}
       >
         <div className="text-xl">📰</div>
         <div className="flex-1 text-left">
-          <div className="text-xs font-medium text-gray-600">News Channel</div>
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">News Channel</div>
         </div>
-      </button>
+        {unreadMessages['news'] > 0 && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 500, damping: 15 }}
+          >
+            <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full">
+              {unreadMessages['news']}
+            </Badge>
+          </motion.div>
+        )}
+      </motion.button>
+
+      {/* AI Assistant */}
+      <motion.button
+        whileHover={{ scale: 1.01, x: 2 }}
+        whileTap={{ scale: 0.98 }}
+        onClick={() => {
+          setSelectedChat({ type: 'ai', id: 'ai-assistant', name: 'AI Assistant' });
+          // Show welcome message
+          setMessages([{
+            id: 'ai-welcome',
+            senderId: 'ai-assistant',
+            content: 'Hello! I\'m your AI Assistant powered by Gemini 2.5 Flash. How can I help you today?',
+            timestamp: new Date().toISOString()
+          }]);
+        }}
+        className={`w-full p-2 rounded-md flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition mb-3 border-b border-gray-100 dark:border-gray-700 relative ${
+          selectedChat?.type === 'ai' ? 'bg-purple-50 dark:bg-purple-900/20' : ''
+        }`}
+      >
+        <div className="flex items-center justify-center w-6 h-6 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
+          <Sparkles className="size-4 text-white" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">AI Assistant</div>
+        </div>
+      </motion.button>
 
       {friends.length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-8">
@@ -2321,13 +3170,18 @@ export default function ChatMain() {
         </div>
       ) : (
         <div className="space-y-1">
-          {friends.map((friend) => (
-            <div
+          <AnimatePresence mode="popLayout">
+          {friends.map((friend, index) => (
+            <motion.div
               key={friend.id}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.05, duration: 0.3 }}
+              whileHover={{ scale: 1.02, x: 4 }}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                 selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
-                  ? 'bg-blue-50 dark:bg-blue-900/30'
-                  : ''
+                  ? 'bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/40 dark:to-purple-900/40 border-l-4 border-blue-500'
+                  : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
               }`}
             >
               <button
@@ -2339,7 +3193,7 @@ export default function ChatMain() {
                     {friend.emoji ? (
                       <span className="text-2xl">{friend.emoji}</span>
                     ) : (
-                      friend.name.charAt(0).toUpperCase()
+                      friend.name?.charAt(0)?.toUpperCase() || '?'
                     )}
                   </AvatarFallback>
                 </Avatar>
@@ -2355,6 +3209,15 @@ export default function ChatMain() {
                   <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
                 </div>
               </button>
+              {(() => {
+                const chatId = [userId, friend.id].sort().join(":");
+                const unreadCount = unreadMessages[`friend-${chatId}`];
+                return unreadCount > 0 ? (
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                    {unreadCount}
+                  </Badge>
+                ) : null;
+              })()}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -2381,8 +3244,9 @@ export default function ChatMain() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
+            </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
 
@@ -2396,11 +3260,17 @@ export default function ChatMain() {
         </div>
       ) : (
         <div className="space-y-1">
-          {channels.filter(c => c.id !== 'news' && c.type !== 'channel').map((group) => (
-            <div
+          <AnimatePresence mode="popLayout">
+          {channels.filter(c => c.id !== 'news' && c.type !== 'channel').map((group, index) => (
+            <motion.div
               key={group.id}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
-                selectedChat?.id === group.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20, scale: 0.9 }}
+              transition={{ delay: index * 0.05, duration: 0.3 }}
+              whileHover={{ scale: 1.02, x: 4 }}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
+                selectedChat?.id === group.id ? 'bg-gradient-to-r from-purple-100 to-pink-100 dark:from-purple-900/40 dark:to-pink-900/40 border-l-4 border-purple-500' : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
               }`}
             >
               <button
@@ -2421,6 +3291,14 @@ export default function ChatMain() {
                   <span className="text-xs text-gray-500 dark:text-gray-400">{group.members?.length || 0} members</span>
                 </div>
               </button>
+              {(() => {
+                const unreadCount = unreadMessages[`group-${group.id}`];
+                return unreadCount > 0 ? (
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                    {unreadCount}
+                  </Badge>
+                ) : null;
+              })()}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -2469,8 +3347,9 @@ export default function ChatMain() {
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
+            </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
 
@@ -2484,11 +3363,16 @@ export default function ChatMain() {
         </div>
       ) : (
         <div className="space-y-1">
-          {channels.filter(c => c.type === 'channel').map((channel) => (
-            <div
+          <AnimatePresence mode="popLayout">
+          {channels.filter(c => c.type === 'channel').map((channel, index) => (
+            <motion.div
               key={channel.id}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${
-                selectedChat?.id === channel.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.05, duration: 0.3 }}
+              whileHover={{ scale: 1.02, x: 4 }}
+              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
+                selectedChat?.id === channel.id ? 'bg-gradient-to-r from-green-100 to-teal-100 dark:from-green-900/40 dark:to-teal-900/40 border-l-4 border-green-500' : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
               }`}
             >
               <button
@@ -2505,10 +3389,21 @@ export default function ChatMain() {
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1 text-left">
-                  <span className="font-medium dark:text-white truncate block">{channel.name}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-medium dark:text-white truncate">{channel.name}</span>
+                    {channel.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
+                  </div>
                   <span className="text-xs text-gray-500 dark:text-gray-400">@{channel.username}</span>
                 </div>
               </button>
+              {(() => {
+                const unreadCount = unreadMessages[`channel-${channel.id}`];
+                return unreadCount > 0 ? (
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                    {unreadCount}
+                  </Badge>
+                ) : null;
+              })()}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -2524,16 +3419,18 @@ export default function ChatMain() {
                   {channel.creatorId === userId && (
                     <>
                       <DropdownMenuItem
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          setEditingChannel(channel);
-                          setEditChannelName(channel.name);
-                          setEditChannelUsername(channel.username);
-                          setEditChannelEmoji(channel.emoji || "");
+                          // Load detailed channel info and open ProfilePanel
+                          const detailedChannel = await loadChannelDetails(channel.id);
+                          if (detailedChannel) {
+                            setProfilePanelData({ type: 'channel', data: detailedChannel });
+                            setProfilePanelOpen(true);
+                          }
                         }}
                       >
                         <Edit className="size-4 mr-2" />
-                        Edit Channel
+                        Manage Channel
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-red-600"
@@ -2565,8 +3462,9 @@ export default function ChatMain() {
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
+            </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
     </ScrollArea>
@@ -2574,11 +3472,21 @@ export default function ChatMain() {
 </div>
 
       {/* Chat Area - Full width on mobile when chat is selected */}
-      <div className={`flex-1 flex flex-col ${!selectedChat ? 'hidden md:flex' : 'flex w-full'}`}>
+      <div className={`flex-1 flex flex-col h-full ${!selectedChat ? 'hidden md:flex' : 'flex w-full'}`}>
         {selectedChat ? (
-          <>
+          <motion.div
+            key={`${selectedChat.type}-${selectedChat.id}`}
+            initial={{ x: '100%', opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: '100%', opacity: 0 }}
+            transition={{ type: 'tween', duration: 0.3, ease: 'easeOut' }}
+            className="flex flex-col h-full"
+          >
             {/* Chat Header with Back Button on Mobile */}
-            <div className="h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 md:px-6">
+            <div 
+              className={`h-16 ${blurStrength > 0 ? 'bg-gradient-to-r from-blue-50/60 via-purple-50/60 to-pink-50/60 dark:from-gray-900/60 dark:via-gray-800/60 dark:to-gray-900/60' : 'bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900'} border-b-2 border-blue-200 dark:border-blue-900 flex items-center px-4 md:px-6 flex-shrink-0 shadow-md`}
+              style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+            >
               {/* Back button - Only visible on mobile */}
               <Button
                 variant="ghost"
@@ -2589,11 +3497,36 @@ export default function ChatMain() {
                 <ArrowLeft className="size-5" />
               </Button>
               
-              <div className="flex items-center gap-3">
+              <div 
+                className="flex items-center gap-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 rounded-lg px-2 py-1.5 -ml-2 transition-colors"
+                onClick={async () => {
+                  if (selectedChat.type === 'news' || selectedChat.type === 'ai') return; // Don't show profile for news or AI
+                  
+                  if (selectedChat.type === 'friend' && selectedChat.friendData) {
+                    setProfilePanelData({ type: 'user', data: selectedChat.friendData });
+                    setProfilePanelOpen(true);
+                  } else if (selectedChat.type === 'group') {
+                    const groupData = channels.find(g => g.id === selectedChat.id);
+                    if (groupData) {
+                      setProfilePanelData({ type: 'group', data: groupData });
+                      setProfilePanelOpen(true);
+                    }
+                  } else if (selectedChat.type === 'channel') {
+                    // Load detailed channel info with members
+                    const detailedChannel = await loadChannelDetails(selectedChat.id);
+                    if (detailedChannel) {
+                      setProfilePanelData({ type: 'channel', data: detailedChannel });
+                      setProfilePanelOpen(true);
+                    }
+                  }
+                }}
+              >
                 <Avatar>
-                  <AvatarFallback className={selectedChat.type === 'group' ? 'bg-purple-600 text-white' : selectedChat.type === 'news' ? 'bg-yellow-100 dark:bg-yellow-900' : 'bg-gray-300 dark:bg-gray-700'}>
+                  <AvatarFallback className={selectedChat.type === 'group' ? 'bg-purple-600 text-white' : selectedChat.type === 'news' ? 'bg-yellow-100 dark:bg-yellow-900' : selectedChat.type === 'ai' ? 'bg-gradient-to-br from-purple-500 to-blue-600 text-white' : 'bg-gray-300 dark:bg-gray-700'}>
                     {selectedChat.type === 'news' ? (
                       <span className="text-2xl">📰</span>
+                    ) : selectedChat.type === 'ai' ? (
+                      <Sparkles className="size-5" />
                     ) : selectedChat.type === 'group' ? (
                       channels.find(g => g.id === selectedChat.id)?.emoji ? (
                         <span className="text-2xl">{channels.find(g => g.id === selectedChat.id)?.emoji}</span>
@@ -2604,91 +3537,214 @@ export default function ChatMain() {
                       selectedChat.friendData?.emoji ? (
                         <span className="text-2xl">{selectedChat.friendData.emoji}</span>
                       ) : (
-                        selectedChat.name.charAt(0).toUpperCase()
+                        selectedChat.name?.charAt(0)?.toUpperCase() || '?'
                       )
                     )}
                   </AvatarFallback>
                 </Avatar>
                 <div>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-semibold dark:text-white">{selectedChat.name}</span>
-                    {selectedChat.type === 'friend' && selectedChat.friendData?.verified && renderVerifiedBadge()}
-                    {selectedChat.type === 'friend' && renderTagBadge(selectedChat.friendData?.tag, isUserAdmin(selectedChat.friendData), selectedChat.friendData?.tagColor)}
+                    <span key="name" className="font-semibold dark:text-white">{selectedChat.name}</span>
+                    {selectedChat.type === 'friend' && selectedChat.friendData?.verified && <span key="friend-verified">{renderVerifiedBadge()}</span>}
+                    {selectedChat.type === 'channel' && selectedChat.verified && <span key="channel-verified">{renderVerifiedBadge()}</span>}
+                    {selectedChat.type === 'friend' && <span key="tag">{renderTagBadge(selectedChat.friendData?.tag, isUserAdmin(selectedChat.friendData), selectedChat.friendData?.tagColor)}</span>}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedChat.type === 'group' ? 'Group chat' : selectedChat.type === 'news' ? 'News Channel' : 'Direct message'}
+                    {selectedChat.type === 'group' ? 'Group chat' : selectedChat.type === 'news' ? 'News Channel' : selectedChat.type === 'ai' ? 'Gemini 2.5 Flash' : selectedChat.type === 'channel' ? 'Channel' : 'Direct message'}
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Messages */}
-            <ScrollArea className="flex-1 p-4 md:p-6">
-              <div className="space-y-4">
-                {messages.map((message) => {
-                  const isOwn = message.senderId === userId;
-                  return (
-                    <div
-                      key={message.id}
-                      className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div className={`max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
-                        {!isOwn && (selectedChat.type === 'group' || selectedChat.type === 'news') && (
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
-                            {getSenderEmoji(message.senderId) && (
-                              <span className="text-sm">{getSenderEmoji(message.senderId)}</span>
+            <ScrollArea className="flex-1 overflow-hidden">
+              <div className="p-4 md:p-6 space-y-4">
+                <AnimatePresence initial={false}>
+                  {messages.map((message, index) => {
+                    const isOwn = message.senderId === userId;
+                    const isAI = message.senderId === 'ai-assistant';
+                    const messageContent = message.content || message.text || '';
+                    const isStickerMessage = isOnlySticker(messageContent);
+                    
+                    return (
+                      <motion.div
+                        key={message.id}
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ 
+                          duration: 0.3,
+                          delay: index * 0.02,
+                          type: "spring",
+                          stiffness: 200,
+                          damping: 20
+                        }}
+                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      >
+                        {isStickerMessage ? (
+                          // Sticker message - BIG and without background
+                          <motion.div
+                            className="flex flex-col items-center gap-1"
+                            whileHover={{ scale: 1.1 }}
+                            transition={{ type: "spring", stiffness: 300 }}
+                          >
+                            {!isOwn && (selectedChat.type === 'group' || selectedChat.type === 'news' || selectedChat.type === 'ai') && (
+                              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+                                {isAI ? (
+                                  <>
+                                    <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
+                                      <Sparkles className="size-2.5 text-white" />
+                                    </div>
+                                    <span className="font-semibold">AI Assistant</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    {getSenderEmoji(message.senderId) && (
+                                      <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
+                                    )}
+                                    <span key="name">{getSenderName(message.senderId)}</span>
+                                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
+                                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
+                                  </>
+                                )}
+                              </div>
                             )}
-                            <span>{getSenderName(message.senderId)}</span>
-                            {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
-                            {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
+                            <div className="text-7xl md:text-8xl leading-none animate-bounce-subtle">
+                              {messageContent}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(message.timestamp).toLocaleTimeString([], { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </div>
+                          </motion.div>
+                        ) : (
+                          // Regular message with bubble
+                          <div className={`max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
+                            {!isOwn && (selectedChat.type === 'group' || selectedChat.type === 'news' || selectedChat.type === 'ai') && (
+                              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
+                                {isAI ? (
+                                  <>
+                                    <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
+                                      <Sparkles className="size-2.5 text-white" />
+                                    </div>
+                                    <span className="font-semibold">AI Assistant</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    {getSenderEmoji(message.senderId) && (
+                                      <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
+                                    )}
+                                    <span key="name">{getSenderName(message.senderId)}</span>
+                                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
+                                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            <motion.div
+                              whileHover={{ scale: 1.02 }}
+                              className={`px-4 py-2 rounded-2xl shadow-md transition-all ${
+                                isOwn
+                                  ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-br-sm hover:shadow-lg'
+                                  : 'bg-gradient-to-br from-gray-200 to-gray-100 dark:from-gray-700 dark:to-gray-800 text-gray-900 dark:text-white rounded-bl-sm hover:shadow-lg'
+                              }`}
+                            >
+                              <div className="break-words">
+                                {isAI && !messageContent ? (
+                                  <span className="animate-shimmer font-semibold">Generating response...</span>
+                                ) : isAI ? (
+                                  // Format markdown for AI responses
+                                  messageContent.split(/(\*\*.*?\*\*|\*.*?\*)/g).map((part, i) => {
+                                    if (part.startsWith('**') && part.endsWith('**')) {
+                                      return <strong key={i}>{part.slice(2, -2)}</strong>;
+                                    } else if (part.startsWith('*') && part.endsWith('*')) {
+                                      return <em key={i}>{part.slice(1, -1)}</em>;
+                                    }
+                                    return <span key={i}>{part}</span>;
+                                  })
+                                ) : (
+                                  messageContent
+                                )}
+                              </div>
+                            </motion.div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3">
+                              {new Date(message.timestamp).toLocaleTimeString([], { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </div>
                           </div>
                         )}
-                        <div
-                          className={`px-4 py-2 rounded-2xl ${
-                            isOwn
-                              ? 'bg-blue-600 text-white rounded-br-sm'
-                              : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-sm'
-                          }`}
-                        >
-                          <div>{message.content || message.text}</div>
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3">
-                          {new Date(message.timestamp).toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
                 <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
 
             {/* Message Input */}
-            <div className="p-3 md:p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800">
+            <div 
+              className={`p-3 md:p-4 ${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'} border-t border-gray-200 dark:border-gray-800 flex-shrink-0`}
+              style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+            >
               {/* Hide input for news channel if not admin */}
               {selectedChat.type === 'news' && currentUser?.email !== 'mikhail02323@gmail.com' ? (
                 <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2">
                   📰 News channel is read-only
                 </div>
+              ) : selectedChat.type === 'channel' && !selectedChat.admins?.includes(userId || '') ? (
+                <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2">
+                  🔒 Only channel admins can post messages
+                </div>
               ) : (
                 <form onSubmit={handleSendMessage} className="flex gap-2">
+                  <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setStickerPickerOpen(true)}
+                      className="hover:bg-gradient-to-br hover:from-yellow-100 hover:to-orange-100 dark:hover:from-yellow-900/40 dark:hover:to-orange-900/40 transition-all"
+                    >
+                      <Smile className="size-5" />
+                    </Button>
+                  </motion.div>
                   <Input
+                    ref={messageInputRef}
                     type="text"
-                    placeholder="Type a message..."
+                    placeholder="Type a message... 💬"
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
-                    className="flex-1"
+                    onFocus={() => {
+                      // Only scroll to bottom on focus if user is near bottom (for mobile keyboard)
+                      const scrollViewport = messagesEndRef.current?.parentElement?.parentElement;
+                      if (scrollViewport && scrollViewport.hasAttribute('data-radix-scroll-area-viewport')) {
+                        const isNearBottom = scrollViewport.scrollHeight - scrollViewport.scrollTop - scrollViewport.clientHeight < 200;
+                        if (isNearBottom) {
+                          setTimeout(() => {
+                            messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+                          }, 300); // Delay to account for keyboard animation
+                        }
+                      }
+                    }}
+                    className="flex-1 border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-600 rounded-full px-4 transition-all shadow-sm focus:shadow-md"
                   />
-                  <Button type="submit" size="icon">
-                    <Send className="size-5" />
-                  </Button>
+                  <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+                    <Button 
+                      type="submit" 
+                      size="icon"
+                      className="bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 shadow-md hover:shadow-lg transition-all rounded-full"
+                    >
+                      <Send className="size-5" />
+                    </Button>
+                  </motion.div>
                 </form>
               )}
             </div>
-          </>
+          </motion.div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-950">
             <div className="text-center text-gray-500 dark:text-gray-400 px-4">
@@ -2702,16 +3758,28 @@ export default function ChatMain() {
 
       {/* Admin Panel */}
       <Dialog open={adminPanelOpen} onOpenChange={setAdminPanelOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent 
+          className={`max-w-2xl ${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+          style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+        >
           <DialogHeader>
             <DialogTitle>Admin Panel</DialogTitle>
             <DialogDescription>Manage users, view stats, and fun global functions</DialogDescription>
           </DialogHeader>
           
-          <Tabs value={adminTab} onValueChange={(value) => setAdminTab(value as 'users' | 'settings' | 'troll')}>
-            <TabsList className="grid w-full grid-cols-3">
+          <Tabs value={adminTab} onValueChange={(value) => {
+            setAdminTab(value as 'users' | 'settings' | 'troll' | 'announcements' | 'channels');
+            // Clear selections when switching tabs
+            if (value === 'channels') {
+              setSelectedChannelsForDelete([]);
+              setChannelSearchQuery('');
+            }
+          }}>
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="users">Users</TabsTrigger>
+              <TabsTrigger value="channels">Channels</TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
+              <TabsTrigger value="announcements">Announcements</TabsTrigger>
               <TabsTrigger value="troll">Troll Zone</TabsTrigger>
             </TabsList>
             
@@ -2732,7 +3800,7 @@ export default function ChatMain() {
                           {user.emoji ? (
                             <span className="text-2xl">{user.emoji}</span>
                           ) : (
-                            user.name.charAt(0).toUpperCase()
+                            user.name?.charAt(0)?.toUpperCase() || '?'
                           )}
                         </AvatarFallback>
                       </Avatar>
@@ -2783,10 +3851,18 @@ export default function ChatMain() {
                           variant="outline"
                           className="flex-1"
                           onClick={() => {
-                            const newPw = prompt(`Enter new password for ${user.name}:`);
-                            if (newPw) {
-                              handleChangePassword(user.id, newPw);
-                            }
+                            setPromptConfig({
+                              title: 'Change Password',
+                              description: `Enter new password for ${user.name}`,
+                              placeholder: 'New password',
+                              type: 'password',
+                              onConfirm: (value) => {
+                                if (value) {
+                                  handleChangePassword(user.id, value);
+                                }
+                              }
+                            });
+                            setPromptOpen(true);
                           }}
                         >
                           Change Password
@@ -2970,6 +4046,128 @@ export default function ChatMain() {
                 </div>
               </div>
             </TabsContent>
+
+            {/* Announcements Tab */}
+            <TabsContent value="announcements">
+              <div className="space-y-4">
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">📢 Global Announcement Banner</h3>
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    Create a banner that will be shown to all users on the site. Users will see it once (tracked via localStorage).
+                  </p>
+                </div>
+
+                {currentAnnouncement && currentAnnouncement.enabled && (
+                  <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h4 className="text-sm font-semibold text-green-900 dark:text-green-100">✅ Active Announcement</h4>
+                        <p className="text-xs text-green-700 dark:text-green-300 mt-1">Currently visible to users who haven't dismissed it</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={async () => {
+                          try {
+                            const response = await fetch(
+                              `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement/disable`,
+                              {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  Authorization: `Bearer ${publicAnonKey}`,
+                                  'X-User-Id': userId || '',
+                                },
+                              }
+                            );
+                            if (response.ok) {
+                              toast.success('Announcement disabled!');
+                              setCurrentAnnouncement({ ...currentAnnouncement, enabled: false });
+                            }
+                          } catch (error) {
+                            toast.error('Failed to disable announcement');
+                          }
+                        }}
+                      >
+                        Disable
+                      </Button>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded p-3 border border-green-200 dark:border-green-700">
+                      <div className="font-semibold text-sm mb-1">{currentAnnouncement.title}</div>
+                      <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{currentAnnouncement.description}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="announcement-title">Title</Label>
+                    <Input
+                      id="announcement-title"
+                      value={announcementTitle}
+                      onChange={(e) => setAnnouncementTitle(e.target.value)}
+                      placeholder="Important Update!"
+                      className="mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="announcement-desc">Description</Label>
+                    <Input
+                      id="announcement-desc"
+                      value={announcementDescription}
+                      onChange={(e) => setAnnouncementDescription(e.target.value)}
+                      placeholder="We've added amazing new features..."
+                      className="mt-1"
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={async () => {
+                      if (!announcementTitle || !announcementDescription) {
+                        toast.error('Please fill in both title and description');
+                        return;
+                      }
+
+                      try {
+                        const response = await fetch(
+                          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/announcement`,
+                          {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              Authorization: `Bearer ${publicAnonKey}`,
+                              'X-User-Id': userId || '',
+                            },
+                            body: JSON.stringify({
+                              title: announcementTitle,
+                              description: announcementDescription,
+                              enabled: true,
+                            }),
+                          }
+                        );
+
+                        const data = await response.json();
+                        if (response.ok) {
+                          toast.success('Announcement created and enabled!');
+                          setCurrentAnnouncement(data.announcement);
+                          setAnnouncementTitle('');
+                          setAnnouncementDescription('');
+                        } else {
+                          toast.error(data.error || 'Failed to create announcement');
+                        }
+                      } catch (error) {
+                        console.error('Create announcement error:', error);
+                        toast.error('Failed to create announcement');
+                      }
+                    }}
+                  >
+                    📢 Create & Enable Announcement
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
             
             {/* Troll Zone Tab */}
             <TabsContent value="troll">
@@ -2989,27 +4187,35 @@ export default function ChatMain() {
                 <Button
                   className="w-full"
                   onClick={async () => {
-                    const message = prompt("Enter broadcast message:");
-                    if (message) {
-                      try {
-                        if (trollChannelRef.current) {
-                          console.log('[Troll] Sending broadcast:', message);
-                          const result = await trollChannelRef.current.send({
-                            type: 'broadcast',
-                            event: 'troll-action',
-                            payload: { action: 'broadcast', message }
-                          });
-                          console.log('[Troll] Broadcast send result:', result);
-                          toast.success("Broadcast sent to all users!");
-                        } else {
-                          console.error('[Troll] Channel not ready');
-                          toast.error("Troll channel not ready");
+                    setPromptConfig({
+                      title: 'Global Broadcast',
+                      description: 'Enter a message to broadcast to all users',
+                      placeholder: 'Your message...',
+                      multiline: true,
+                      onConfirm: async (message) => {
+                        if (message) {
+                          try {
+                            if (trollChannelRef.current) {
+                              console.log('[Troll] Sending broadcast:', message);
+                              const result = await trollChannelRef.current.send({
+                                type: 'broadcast',
+                                event: 'troll-action',
+                                payload: { action: 'broadcast', message }
+                              });
+                              console.log('[Troll] Broadcast send result:', result);
+                              toast.success("Broadcast sent to all users!");
+                            } else {
+                              console.error('[Troll] Channel not ready');
+                              toast.error("Troll channel not ready");
+                            }
+                          } catch (error) {
+                            console.error("[Troll] Broadcast error:", error);
+                            toast.error("Failed to send broadcast");
+                          }
                         }
-                      } catch (error) {
-                        console.error("[Troll] Broadcast error:", error);
-                        toast.error("Failed to send broadcast");
                       }
-                    }
+                    });
+                    setPromptOpen(true);
                   }}
                 >
                   📢 Global Broadcast
@@ -3124,13 +4330,218 @@ export default function ChatMain() {
                 </Button>
               </div>
             </TabsContent>
+
+            {/* Channels Tab */}
+            <TabsContent value="channels">
+              <div className="space-y-4">
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-gray-400" />
+                  <Input
+                    placeholder="Search channels by name or username..."
+                    value={channelSearchQuery}
+                    onChange={(e) => setChannelSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    {channelSearchQuery ? 
+                      `Found ${channels.filter(c => 
+                        c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                        c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                      ).length} channels` 
+                      : `Manage all channels (${channels.length} total)`
+                    }
+                    {selectedChannelsForDelete.length > 0 && (
+                      <span className="ml-2 text-blue-600 dark:text-blue-400 font-medium">
+                        • {selectedChannelsForDelete.length} selected
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const filteredChannels = channels.filter(c => 
+                          c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                          c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                        );
+                        if (selectedChannelsForDelete.length === filteredChannels.length) {
+                          setSelectedChannelsForDelete([]);
+                        } else {
+                          setSelectedChannelsForDelete(filteredChannels.map(c => c.id));
+                        }
+                      }}
+                    >
+                      {selectedChannelsForDelete.length === channels.filter(c => 
+                        c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                        c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                      ).length && channels.filter(c => 
+                        c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                        c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                      ).length > 0 ? 'Deselect All' : 'Select All'}
+                    </Button>
+                    {selectedChannelsForDelete.length > 0 && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={async () => {
+                          if (!confirm(`Are you sure you want to delete ${selectedChannelsForDelete.length} channels? This cannot be undone.`)) {
+                            return;
+                          }
+
+                          try {
+                            let successCount = 0;
+                            let failCount = 0;
+
+                            for (const channelId of selectedChannelsForDelete) {
+                              try {
+                                const response = await fetch(
+                                  `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${channelId}`,
+                                  {
+                                    method: "DELETE",
+                                    headers: {
+                                      Authorization: `Bearer ${publicAnonKey}`,
+                                      "X-User-Id": userId || '',
+                                    },
+                                  }
+                                );
+
+                                if (response.ok) {
+                                  successCount++;
+                                } else {
+                                  failCount++;
+                                  const errorData = await response.json();
+                                  console.error(`Failed to delete channel ${channelId}:`, errorData);
+                                }
+                              } catch (error) {
+                                failCount++;
+                                console.error(`Error deleting channel ${channelId}:`, error);
+                              }
+                            }
+
+                            if (successCount > 0) {
+                              toast.success(`Deleted ${successCount} channel(s)`);
+                              setSelectedChannelsForDelete([]);
+                              loadChannels();
+                            }
+                            if (failCount > 0) {
+                              toast.error(`Failed to delete ${failCount} channel(s)`);
+                            }
+                          } catch (error) {
+                            console.error("Bulk delete error:", error);
+                            toast.error("Failed to delete channels");
+                          }
+                        }}
+                      >
+                        Delete Selected ({selectedChannelsForDelete.length})
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <ScrollArea className="max-h-96">
+                  <div className="space-y-2">
+                    {channels.filter(c => 
+                      c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                      c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                    ).length === 0 ? (
+                      <p className="text-center text-gray-500 py-4">
+                        {channelSearchQuery ? 'No channels match your search' : 'No channels found'}
+                      </p>
+                    ) : (
+                      channels
+                        .filter(c => 
+                          c.name?.toLowerCase().includes(channelSearchQuery.toLowerCase()) || 
+                          c.username?.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                        )
+                        .map((channel) => (
+                        <div
+                          key={channel.id}
+                          className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedChannelsForDelete.includes(channel.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedChannelsForDelete([...selectedChannelsForDelete, channel.id]);
+                              } else {
+                                setSelectedChannelsForDelete(selectedChannelsForDelete.filter(id => id !== channel.id));
+                              }
+                            }}
+                            className="rounded"
+                          />
+                          <Avatar className="size-10">
+                            <AvatarFallback className="bg-purple-600 text-white">
+                              {channel.emoji || channel.name.charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                {channel.name}
+                              </p>
+                              {channel.verified && <Shield className="size-3 text-blue-500" />}
+                            </div>
+                            <p className="text-xs text-gray-600 dark:text-gray-400">
+                              @{channel.username} • Created by {allUsers.find(u => u.id === channel.creatorId)?.name || 'Unknown'}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              if (!confirm(`Delete channel "${channel.name}"?`)) return;
+
+                              try {
+                                const response = await fetch(
+                                  `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${channel.id}`,
+                                  {
+                                    method: "DELETE",
+                                    headers: {
+                                      Authorization: `Bearer ${publicAnonKey}`,
+                                      "X-User-Id": userId || '',
+                                    },
+                                  }
+                                );
+
+                                if (response.ok) {
+                                  toast.success("Channel deleted");
+                                  loadChannels();
+                                } else {
+                                  const errorData = await response.json();
+                                  console.error("Delete channel failed:", errorData);
+                                  toast.error(errorData.error || "Failed to delete channel");
+                                }
+                              } catch (error) {
+                                console.error("Delete channel error:", error);
+                                toast.error("Failed to delete channel");
+                              }
+                            }}
+                          >
+                            <Trash2 className="size-4 text-red-500" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </TabsContent>
           </Tabs>
         </DialogContent>
       </Dialog>
 
       {/* Moderator Panel */}
       <Dialog open={moderatorPanelOpen} onOpenChange={setModeratorPanelOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent 
+          className={`max-w-2xl ${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+          style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
+        >
           <DialogHeader>
             <DialogTitle>Moderator Panel</DialogTitle>
             <DialogDescription>Search and manage users</DialogDescription>
@@ -3184,7 +4595,7 @@ export default function ChatMain() {
                               {user.emoji ? (
                                 <span className="text-2xl">{user.emoji}</span>
                               ) : (
-                                user.name.charAt(0).toUpperCase()
+                                user.name?.charAt(0)?.toUpperCase() || '?'
                               )}
                             </AvatarFallback>
                           </Avatar>
@@ -3215,15 +4626,15 @@ export default function ChatMain() {
                               {user.emoji ? (
                                 <span className="text-2xl">{user.emoji}</span>
                               ) : (
-                                user.name.charAt(0).toUpperCase()
+                                user.name?.charAt(0)?.toUpperCase() || '?'
                               )}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1">
                             <div className="font-medium flex items-center gap-2">
-                              {user.name}
-                              {user.verified && renderVerifiedBadge()}
-                              {renderTagBadge(user.tag, user.email === 'mikhail02323@gmail.com', user.tagColor)}
+                              <span key="name">{user.name}</span>
+                              {user.verified && <span key="verified">{renderVerifiedBadge()}</span>}
+                              {renderTagBadge(user.tag, user.email === 'mikhail02323@gmail.com', user.tagColor) && <span key="tag">{renderTagBadge(user.tag, user.email === 'mikhail02323@gmail.com', user.tagColor)}</span>}
                             </div>
                             <div className="text-xs text-gray-500">@{user.username}</div>
                           </div>
@@ -3246,7 +4657,7 @@ export default function ChatMain() {
                       {selectedUserForMod.emoji ? (
                         <span className="text-2xl">{selectedUserForMod.emoji}</span>
                       ) : (
-                        selectedUserForMod.name.charAt(0).toUpperCase()
+                        selectedUserForMod.name?.charAt(0)?.toUpperCase() || '?'
                       )}
                     </AvatarFallback>
                   </Avatar>
@@ -3269,10 +4680,18 @@ export default function ChatMain() {
                   variant="outline"
                   className="w-full"
                   onClick={() => {
-                    const newPw = prompt(`Enter new password for ${selectedUserForMod.name}:`);
-                    if (newPw) {
-                      handleChangePassword(selectedUserForMod.id, newPw);
-                    }
+                    setPromptConfig({
+                      title: 'Change Password',
+                      description: `Enter new password for ${selectedUserForMod.name}`,
+                      placeholder: 'New password',
+                      type: 'password',
+                      onConfirm: (value) => {
+                        if (value) {
+                          handleChangePassword(selectedUserForMod.id, value);
+                        }
+                      }
+                    });
+                    setPromptOpen(true);
                   }}
                 >
                   Change Password
@@ -3519,9 +4938,11 @@ export default function ChatMain() {
                     <ScrollArea className="h-48 border rounded-md p-2">
                       <div className="grid grid-cols-8 gap-1">
                         {COMMON_EMOJIS.map((emoji, idx) => (
-                          <button
+                          <motion.button
                             key={idx}
                             type="button"
+                            whileHover={{ scale: 1.2 }}
+                            whileTap={{ scale: 0.9 }}
                             className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-900 rounded p-1 cursor-pointer"
                             onClick={() => {
                               setEditGroupEmoji(emoji);
@@ -3529,7 +4950,7 @@ export default function ChatMain() {
                             }}
                           >
                             {emoji}
-                          </button>
+                          </motion.button>
                         ))}
                       </div>
                     </ScrollArea>
@@ -3651,9 +5072,11 @@ export default function ChatMain() {
                     <ScrollArea className="h-48 border rounded-lg p-2">
                       <div className="grid grid-cols-8 gap-1">
                         {COMMON_EMOJIS.map((emoji, idx) => (
-                          <button
+                          <motion.button
                             key={idx}
                             type="button"
+                            whileHover={{ scale: 1.2 }}
+                            whileTap={{ scale: 0.9 }}
                             className="text-2xl hover:bg-gray-100 dark:hover:bg-gray-900 rounded p-1 cursor-pointer"
                             onClick={() => {
                               setEditChannelEmoji(emoji);
@@ -3661,12 +5084,95 @@ export default function ChatMain() {
                             }}
                           >
                             {emoji}
-                          </button>
+                          </motion.button>
                         ))}
                       </div>
                     </ScrollArea>
                   )}
                 </div>
+              </div>
+
+              {/* Channel Admin Management */}
+              <div className="border-t pt-4 mt-4 dark:border-gray-700">
+                <Label className="text-base font-semibold mb-3 block">
+                  Channel Members ({editingChannel?.members?.length || 0})
+                </Label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  Only admins can post messages in this channel. Members can only read.
+                </p>
+                <ScrollArea className="h-48 border rounded-lg p-2 dark:border-gray-700">
+                  <div className="space-y-2">
+                    {editingChannel?.members?.map((memberId: string) => {
+                      const member = [...friends, ...allUsers].find((u: any) => u.id === memberId);
+                      const isAdmin = editingChannel?.admins?.includes(memberId);
+                      const isCreator = editingChannel?.creatorId === memberId;
+                      
+                      return (
+                        <div key={memberId} className="flex items-center gap-3 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
+                          <Avatar className="flex-shrink-0 size-8">
+                            <AvatarFallback className="bg-gradient-to-br from-purple-600 to-blue-600 text-white text-sm">
+                              {member?.emoji ? (
+                                <span className="text-lg">{member.emoji}</span>
+                              ) : (
+                                member?.name?.charAt(0)?.toUpperCase() || '?'
+                              )}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium dark:text-white truncate">
+                              {member?.name || 'Unknown User'}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {isCreator ? 'Creator' : isAdmin ? 'Admin' : 'Member'}
+                            </div>
+                          </div>
+                          {!isCreator && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={isAdmin ? "destructive" : "default"}
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(
+                                    `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels/${editingChannel.id}/admins`,
+                                    {
+                                      method: "POST",
+                                      headers: {
+                                        "Content-Type": "application/json",
+                                        Authorization: `Bearer ${publicAnonKey}`,
+                                        'X-User-Id': userId || '',
+                                      },
+                                      body: JSON.stringify({ 
+                                        memberId, 
+                                        action: isAdmin ? 'remove' : 'add' 
+                                      }),
+                                    }
+                                  );
+
+                                  const data = await response.json();
+                                  if (!response.ok) {
+                                    toast.error(data.error || "Failed to update admin");
+                                    return;
+                                  }
+
+                                  toast.success(isAdmin ? "Admin removed" : "Admin added");
+                                  // Update the editingChannel state
+                                  setEditingChannel(data.channel);
+                                  loadChannels();
+                                } catch (error) {
+                                  console.error("Update admin error:", error);
+                                  toast.error("Failed to update admin");
+                                }
+                              }}
+                            >
+                              {isAdmin ? 'Remove Admin' : 'Set as Admin'}
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </div>
             </div>
             <DialogFooter className="mt-4">
@@ -3720,15 +5226,15 @@ export default function ChatMain() {
                               {friend.emoji ? (
                                 <span className="text-lg">{friend.emoji}</span>
                               ) : (
-                                friend.name.charAt(0).toUpperCase()
+                                friend.name?.charAt(0)?.toUpperCase() || '?'
                               )}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-medium dark:text-white">{friend.name}</span>
-                              {friend.verified && renderVerifiedBadge()}
-                              {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}
+                              <span key="name" className="font-medium dark:text-white">{friend.name}</span>
+                              {friend.verified && <span key="verified">{renderVerifiedBadge()}</span>}
+                              {renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor) && <span key="tag">{renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor)}</span>}
                             </div>
                             <div className="text-xs text-gray-500">@{friend.username}</div>
                           </div>
@@ -3749,6 +5255,168 @@ export default function ChatMain() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Custom Prompt Dialog */}
+      <CustomPrompt
+        open={promptOpen}
+        onClose={() => setPromptOpen(false)}
+        onConfirm={promptConfig.onConfirm}
+        title={promptConfig.title}
+        description={promptConfig.description}
+        placeholder={promptConfig.placeholder}
+        defaultValue={promptConfig.defaultValue}
+        type={promptConfig.type}
+        multiline={promptConfig.multiline}
+      />
+
+      {/* Sticker Picker */}
+      <StickerPicker
+        open={stickerPickerOpen}
+        onClose={() => setStickerPickerOpen(false)}
+        onSelectSticker={async (sticker) => {
+          // Send sticker immediately instead of adding to input
+          if (!selectedChat) return;
+          
+          try {
+            // If it's news channel, use news endpoint (admin only)
+            if (selectedChat.type === 'news') {
+              if (currentUser?.email !== 'mikhail02323@gmail.com') {
+                toast.error("Only admin can post to news channel");
+                return;
+              }
+
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/news`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    'X-User-Id': userId || '',
+                  },
+                  body: JSON.stringify({ content: sticker }),
+                }
+              );
+
+              if (!response.ok) {
+                const data = await response.json();
+                toast.error(data.error || "Failed to send sticker");
+                return;
+              }
+
+              loadMessages('news', 'news');
+              
+              // Broadcast new news message via Realtime
+              if (messageChannelRef.current) {
+                await messageChannelRef.current.send({
+                  type: 'broadcast',
+                  event: 'new-message',
+                  payload: { chatType: 'news', chatId: 'news' }
+                });
+              }
+              
+              return;
+            }
+
+            // Regular message
+            const response = await fetch(
+              `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${publicAnonKey}`,
+                  'X-User-Id': userId || '',
+                },
+                body: JSON.stringify({
+                  chatId: selectedChat.id,
+                  content: sticker,
+                  chatType: selectedChat.type,
+                }),
+              }
+            );
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+              toast.error(errorData.error || "Failed to send sticker");
+              return;
+            }
+
+            loadMessages(selectedChat.type, selectedChat.id);
+            
+            // Broadcast new message via Realtime
+            if (messageChannelRef.current) {
+              await messageChannelRef.current.send({
+                type: 'broadcast',
+                event: 'new-message',
+                payload: { chatType: selectedChat.type, chatId: selectedChat.id }
+              });
+            }
+          } catch (error) {
+            console.error("Send sticker error:", error);
+            toast.error("Failed to send sticker");
+          }
+        }}
+      />
+
+      {/* Announcement Banner */}
+      {showAnnouncementBanner && currentAnnouncement && (
+        <AnnouncementBanner
+          id={currentAnnouncement.id}
+          title={currentAnnouncement.title}
+          description={currentAnnouncement.description}
+          onDismiss={async () => {
+            try {
+              // Mark as dismissed on the server
+              await fetch(
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/announcement/dismiss`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    'X-User-Id': userId || '',
+                  },
+                  body: JSON.stringify({
+                    announcementId: currentAnnouncement.id,
+                  }),
+                }
+              );
+              setShowAnnouncementBanner(false);
+            } catch (error) {
+              console.error('Failed to dismiss announcement:', error);
+              // Still hide it locally even if the API call fails
+              setShowAnnouncementBanner(false);
+            }
+          }}
+        />
+      )}
+
+      {/* Profile Panel */}
+      {profilePanelOpen && profilePanelData && userId && (
+        <ProfilePanel
+          type={profilePanelData.type}
+          data={profilePanelData.data}
+          currentUserId={userId}
+          onClose={() => {
+            setProfilePanelOpen(false);
+            setProfilePanelData(null);
+          }}
+          onUpdate={() => {
+            loadFriends();
+            loadChannels();
+            if (selectedChat && profilePanelData.type !== 'user') {
+              // Reload messages if we're viewing the updated group/channel
+              loadMessages(selectedChat.type, selectedChat.id);
+            }
+          }}
+          onRemoveFriend={(friendId) => {
+            handleRemoveFriend(friendId);
+          }}
+          friends={friends}
+          allUsers={allUsers}
+        />
+      )}
     </div>
   );
 }
