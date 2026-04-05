@@ -5,9 +5,10 @@ import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
-// VERSION: 2024-04-04-v29-MESSAGE-EDIT-FINAL-FIX
+// VERSION: 2024-04-05-v31-EDIT-DEBUG-ENHANCED
 
-console.log('🚀🚀🚀 SERVER STARTING - VERSION: v29-MESSAGE-EDIT-FINAL-FIX 🚀🚀🚀');
+console.log('🚀🚀🚀 SERVER STARTING - VERSION: v31-EDIT-DEBUG-ENHANCED 🚀🚀🚀');
+console.log('🚀🚀🚀 TIMESTAMP:', Date.now(), '🚀🚀🚀');
 console.log('🚀🚀🚀 DEPLOYED AT:', new Date().toISOString(), '🚀🚀🚀');
 
 // Apply CORS middleware FIRST
@@ -90,12 +91,12 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 
 // Health check endpoint
 app.get("/make-server-a1c86d03/health", (c) => {
-  return c.json({ status: "ok", version: "2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS", timestamp: new Date().toISOString() });
+  return c.json({ status: "ok", version: "2024-04-05-v31-EDIT-DEBUG-ENHANCED", timestamp: new Date().toISOString() });
 });
 
 // Version check endpoint
 app.get("/make-server-a1c86d03/version", (c) => {
-  return c.json({ version: "2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS" });
+  return c.json({ version: "2024-04-05-v31-EDIT-DEBUG-ENHANCED", timestamp: Date.now() });
 });
 
 const SERVER_ID = 'make-server-a1c86d03';
@@ -1647,7 +1648,8 @@ app.put(`/${SERVER_ID}/message/:messageId`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
     
-    console.log('🔧🔧🔧 [EDIT MESSAGE v2.1] ENDPOINT CALLED - CACHE BUSTED!');
+    console.log('🔧🔧🔧 [EDIT MESSAGE v3.0 - APRIL 5 2026] ENDPOINT CALLED - CACHE BUSTED!');
+    console.log('🔧 [EDIT MESSAGE] Timestamp:', Date.now());
     
     if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
@@ -1709,12 +1711,20 @@ app.put(`/${SERVER_ID}/message/:messageId`, async (c) => {
     // SAVE TO DATABASE
     await kv.set(messageKey, messages);
     
+    console.log('🔧 [EDIT MESSAGE] ✅ SAVED TO DATABASE');
+    
     // Verify the update
     const verifyMessages = await kv.get(messageKey);
     const verifyMsg = verifyMessages?.find((m: any) => m.id === messageId);
     console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - message after save:', JSON.stringify(verifyMsg));
     console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - content field:', verifyMsg?.content);
     console.log('🔧 [EDIT MESSAGE] ✅ VERIFICATION - text field:', verifyMsg?.text);
+    
+    if (verifyMsg?.content !== content) {
+      console.error('🔧 [EDIT MESSAGE] ❌❌❌ SAVE FAILED! Content does not match!');
+      console.error('🔧 [EDIT MESSAGE] Expected:', content);
+      console.error('🔧 [EDIT MESSAGE] Got:', verifyMsg?.content);
+    }
 
     // RETURN THE UPDATED MESSAGE WITH NEW CONTENT
     const updatedMessage = messages[msgIndex];

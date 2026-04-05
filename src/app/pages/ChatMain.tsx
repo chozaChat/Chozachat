@@ -276,7 +276,7 @@ export default function ChatMain() {
   const SERVER_ID = 'make-server-a1c86d03';
   
   // FRONTEND VERSION FOR DEBUGGING
-  const FRONTEND_VERSION = 'v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS';
+  const FRONTEND_VERSION = 'v31-EDIT-DEBUG-ENHANCED';
   
   // Helper function to check if a message is just a sticker (emoji only, no other text)
   const isOnlySticker = (text: string) => {
@@ -476,15 +476,15 @@ export default function ChatMain() {
         console.log("=== SERVER VERSION CHECK ===");
         console.log("Server version:", data.version);
         console.log("Server timestamp:", data.timestamp);
-        console.log("Expected version: 2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS");
+        console.log("Expected version: 2024-04-05-v31-EDIT-DEBUG-ENHANCED");
         
         if (!data.version) {
           console.warn("⚠️ WARNING: Server did not return version info. Server may not be deployed.");
           console.warn("Response data:", data);
-        } else if (data.version !== "2024-04-01-v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS") {
+        } else if (data.version !== "2024-04-05-v31-EDIT-DEBUG-ENHANCED") {
           console.warn("⚠️ WARNING: Server version mismatch! Old code might be running.");
           console.warn("⚠️ Current version:", data.version);
-          toast.error(`Server version mismatch! Expected v28-PROPERLY-SEPARATED-GROUPS-AND-CHANNELS, got ${data.version}`, { duration: 10000 });
+          toast.error(`Server version mismatch! Expected v31-EDIT-DEBUG-ENHANCED, got ${data.version}`, { duration: 10000 });
         } else {
           console.log("✓ Server version is correct!");
           // Success toast removed - only show errors
@@ -997,6 +997,7 @@ export default function ChatMain() {
       const data = await response.json();
       console.log(`✅ [loadMessages] Loaded ${data.messages?.length || 0} messages for ${chatType}:${chatId}`);
       console.log('📝 [loadMessages] Last message:', JSON.stringify(data.messages?.[data.messages.length - 1]));
+      console.log('📝 [loadMessages] First 3 messages content:', data.messages?.slice(0, 3).map((m: any) => ({id: m.id, content: m.content, text: m.text, edited: m.edited})));
       if (data.messages) {
         setMessages(data.messages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -1699,33 +1700,59 @@ export default function ChatMain() {
 
   // Handle message edit
   const handleEditMessage = async () => {
-    if (!editingMessage || !editMessageText.trim()) return;
+    if (!editingMessage || !editMessageText.trim()) {
+      console.log('🔧 [CLIENT EDIT] Cancelled - no message or empty text');
+      return;
+    }
+
+    console.log('🔧 [CLIENT EDIT] ========== STARTING EDIT ==========');
+    console.log('🔧 [CLIENT EDIT] Message ID:', editingMessage.id);
+    console.log('🔧 [CLIENT EDIT] Current content:', editingMessage.content || editingMessage.text);
+    console.log('🔧 [CLIENT EDIT] New content:', editMessageText);
+    console.log('🔧 [CLIENT EDIT] Chat:', selectedChat?.type, selectedChat?.id);
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/message/${editingMessage.id}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-            'X-User-Id': userId || ''
-          },
-          body: JSON.stringify({ 
-            content: editMessageText,
-            chatId: selectedChat?.id,
-            chatType: selectedChat?.type
-          })
-        }
-      );
+      const editUrl = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/message/${editingMessage.id}`;
+      console.log('🔧 [CLIENT EDIT] URL:', editUrl);
+      
+      const response = await fetch(editUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`,
+          'X-User-Id': userId || ''
+        },
+        body: JSON.stringify({ 
+          content: editMessageText,
+          chatId: selectedChat?.id,
+          chatType: selectedChat?.type
+        })
+      });
+
+      console.log('🔧 [CLIENT EDIT] Response status:', response.status);
 
       if (response.ok) {
         const updatedMessage = await response.json();
-        console.log('Edit response from server:', updatedMessage);
+        console.log('🔧 [CLIENT EDIT] ✅ Server response:', JSON.stringify(updatedMessage, null, 2));
+        console.log('🔧 [CLIENT EDIT] Updated content:', updatedMessage.message?.content);
+        console.log('🔧 [CLIENT EDIT] Updated text:', updatedMessage.message?.text);
         
-        // Reload messages from server to ensure we have the latest data
+        // IMMEDIATELY update the message in the local state for instant UI update
+        if (updatedMessage.message) {
+          console.log('🔧 [CLIENT EDIT] Updating local state immediately...');
+          setMessages(prev => prev.map(m => 
+            m.id === editingMessage.id ? updatedMessage.message : m
+          ));
+          console.log('🔧 [CLIENT EDIT] ✅ Local state updated!');
+        }
+        
+        // Also reload messages from server to ensure we have the latest data
         if (selectedChat) {
-          await loadMessages(selectedChat.type, selectedChat.id);
+          console.log('🔧 [CLIENT EDIT] Reloading messages from server...');
+          setTimeout(async () => {
+            await loadMessages(selectedChat.type, selectedChat.id);
+            console.log('🔧 [CLIENT EDIT] Messages reloaded from server');
+          }, 100);
         }
         
         // Broadcast the edit so other users see it
@@ -1741,6 +1768,7 @@ export default function ChatMain() {
         setEditMessageText("");
         setMessageText("");
         toast.success("Message updated");
+        console.log('🔧 [CLIENT EDIT] ========== EDIT COMPLETE ==========');
       } else {
         const data = await response.json();
         toast.error(data.error || "Failed to edit message");
