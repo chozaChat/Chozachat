@@ -1183,6 +1183,64 @@ export default function AdminPanel() {
     }
   };
 
+  const handleZaWarudo = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'zaWarudo', timestamp: Date.now() }
+      });
+      
+      toast.success("⏰ ZA WARUDO! Time has stopped!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] Za Warudo error:", error);
+      toast.error("Failed to stop time");
+    }
+  };
+
+  const handleToBeContinued = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'toBeContinued', timestamp: Date.now() }
+      });
+      
+      toast.success("⬅️ To Be Continued... activated!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] To Be Continued error:", error);
+      toast.error("Failed to activate To Be Continued");
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!userId) {
       toast.error("User ID not found");
@@ -1683,6 +1741,36 @@ export default function AdminPanel() {
                       className="w-full bg-orange-600 hover:bg-orange-700"
                     >
                       Rick Roll 'Em
+                    </Button>
+                  </div>
+
+                  {/* Za Warudo */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-yellow-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>⏰</span>
+                      ZA WARUDO!
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Dio's time stop with white flash and golden text</p>
+                    <Button
+                      onClick={handleZaWarudo}
+                      className="w-full bg-yellow-600 hover:bg-yellow-700"
+                    >
+                      ⏰ ZA WARUDO!
+                    </Button>
+                  </div>
+
+                  {/* To Be Continued */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-amber-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>⬅️</span>
+                      To Be Continued...
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Freeze frame with the iconic JoJo ending arrow</p>
+                    <Button
+                      onClick={handleToBeContinued}
+                      className="w-full bg-amber-600 hover:bg-amber-700"
+                    >
+                      ⬅️ To Be Continued
                     </Button>
                   </div>
                 </div>

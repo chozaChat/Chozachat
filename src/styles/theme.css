@@ -213,6 +213,34 @@
     50% { transform: translateY(-20px) scale(1.1); }
   }
 
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes jojo-slide-in {
+    from {
+      right: -500px;
+      opacity: 0;
+    }
+    to {
+      right: 50px;
+      opacity: 1;
+    }
+  }
+
+  @keyframes menacing-float {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    25% { transform: translateY(-10px) rotate(2deg); }
+    50% { transform: translateY(0px) rotate(-2deg); }
+    75% { transform: translateY(-5px) rotate(1deg); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: translateX(-50%) scale(1); }
+    50% { transform: translateX(-50%) scale(1.2); }
+  }
+
   @keyframes bounce-subtle {
     0%, 100% {
       transform: translateY(0);

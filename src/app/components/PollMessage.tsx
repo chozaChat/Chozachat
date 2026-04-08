@@ -184,32 +184,32 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
           <div className="font-semibold text-lg dark:text-white">{poll.question}</div>
           <div className="flex flex-wrap gap-2 mt-2">
             {poll.anonymous && (
-              <Badge variant="outline" className="text-xs bg-gray-100 dark:bg-gray-800">
+              <Badge key="anonymous" variant="outline" className="text-xs bg-gray-100 dark:bg-gray-800">
                 🕵️ Anonymous
               </Badge>
             )}
             {poll.multipleAnswers && (
-              <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900">
+              <Badge key="multiple" variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900">
                 ☑️ Multiple Choice
               </Badge>
             )}
             {poll.victorineMode && (
-              <Badge variant="outline" className="text-xs bg-purple-100 dark:bg-purple-900">
+              <Badge key="victorine" variant="outline" className="text-xs bg-purple-100 dark:bg-purple-900">
                 🎓 Quiz Mode
               </Badge>
             )}
             {poll.stopped && (
-              <Badge variant="outline" className="text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
+              <Badge key="stopped" variant="outline" className="text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
                 🛑 Voting Stopped
               </Badge>
             )}
             {isExpired && (
-              <Badge variant="outline" className="text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300">
+              <Badge key="expired" variant="outline" className="text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300">
                 ⏱️ Expired
               </Badge>
             )}
             {poll.expiresAt && !isExpired && timeRemaining && (
-              <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900">
+              <Badge key="timer" variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900">
                 <Clock className="size-3 mr-1" />
                 {timeRemaining}
               </Badge>

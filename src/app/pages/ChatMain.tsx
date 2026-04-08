@@ -747,21 +747,100 @@ export default function ChatMain() {
             break;
 
           case 'glitchEffect':
-            const glitchElement = document.body;
-            glitchElement.style.animation = 'glitch 0.3s infinite';
+            // Create full-screen glitch overlay
+            const glitchOverlay = document.createElement('div');
+            glitchOverlay.style.position = 'fixed';
+            glitchOverlay.style.top = '0';
+            glitchOverlay.style.left = '0';
+            glitchOverlay.style.width = '100%';
+            glitchOverlay.style.height = '100%';
+            glitchOverlay.style.pointerEvents = 'none';
+            glitchOverlay.style.zIndex = '99999';
+            glitchOverlay.style.mixBlendMode = 'difference';
+            glitchOverlay.style.animation = 'glitch 0.2s infinite';
+            document.body.appendChild(glitchOverlay);
+
+            // Add random glitch bars
+            const glitchInterval = setInterval(() => {
+              const bar = document.createElement('div');
+              bar.style.position = 'fixed';
+              bar.style.left = '0';
+              bar.style.width = '100%';
+              bar.style.height = Math.random() * 50 + 10 + 'px';
+              bar.style.top = Math.random() * window.innerHeight + 'px';
+              bar.style.background = `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 0.8)`;
+              bar.style.zIndex = '99998';
+              bar.style.pointerEvents = 'none';
+              glitchOverlay.appendChild(bar);
+              setTimeout(() => bar.remove(), 100);
+            }, 50);
+
+            // Apply glitch to body
+            document.body.style.animation = 'glitch 0.15s infinite';
+            
             setTimeout(() => {
-              glitchElement.style.animation = '';
-            }, 3000);
+              clearInterval(glitchInterval);
+              glitchOverlay.remove();
+              document.body.style.animation = '';
+            }, 4000);
+            
+            toast.error('⚠️ SYSTEM ERROR: MATRIX CORRUPTED', {
+              duration: 3000,
+              style: {
+                background: '#000',
+                color: '#00ff00',
+                fontFamily: 'monospace',
+                fontSize: '16px',
+                border: '2px solid #00ff00'
+              }
+            });
             break;
 
           case 'discoMode':
+            // Create disco overlay
+            const discoOverlay = document.createElement('div');
+            discoOverlay.style.position = 'fixed';
+            discoOverlay.style.top = '0';
+            discoOverlay.style.left = '0';
+            discoOverlay.style.width = '100%';
+            discoOverlay.style.height = '100%';
+            discoOverlay.style.pointerEvents = 'none';
+            discoOverlay.style.zIndex = '99997';
+            discoOverlay.style.transition = 'background-color 0.1s';
+            document.body.appendChild(discoOverlay);
+
+            // Flash colors rapidly
             const disco = setInterval(() => {
-              const randomColor = `hsl(${Math.random() * 360}, 70%, 50%)`;
-              document.body.style.backgroundColor = randomColor;
-            }, 200);
+              const randomColor = `hsla(${Math.random() * 360}, 100%, 50%, 0.3)`;
+              discoOverlay.style.backgroundColor = randomColor;
+            }, 150);
+
+            // Add disco ball emoji
+            const discoBall = document.createElement('div');
+            discoBall.style.position = 'fixed';
+            discoBall.style.top = '20px';
+            discoBall.style.left = '50%';
+            discoBall.style.transform = 'translateX(-50%)';
+            discoBall.style.fontSize = '80px';
+            discoBall.style.zIndex = '99999';
+            discoBall.style.animation = 'bounce 0.5s infinite, spin 2s linear infinite';
+            discoBall.textContent = '🪩';
+            document.body.appendChild(discoBall);
+
+            toast('🪩 DISCO PARTY MODE ACTIVATED! 🪩', {
+              duration: 5000,
+              style: {
+                background: 'linear-gradient(45deg, #ff0080, #00ff80, #0080ff)',
+                color: 'white',
+                fontSize: '18px',
+                fontWeight: 'bold'
+              }
+            });
+
             setTimeout(() => {
               clearInterval(disco);
-              document.body.style.backgroundColor = '';
+              discoOverlay.remove();
+              discoBall.remove();
             }, 5000);
             break;
 
@@ -795,6 +874,165 @@ export default function ChatMain() {
             rickContainer.textContent = '🕺💃';
             document.body.appendChild(rickContainer);
             setTimeout(() => rickContainer.remove(), 8000);
+            break;
+
+          case 'zaWarudo':
+            // ZA WARUDO! - Time Stop
+            // Flash white screen
+            const zaWarudoFlash = document.createElement('div');
+            zaWarudoFlash.style.position = 'fixed';
+            zaWarudoFlash.style.top = '0';
+            zaWarudoFlash.style.left = '0';
+            zaWarudoFlash.style.width = '100%';
+            zaWarudoFlash.style.height = '100%';
+            zaWarudoFlash.style.backgroundColor = 'white';
+            zaWarudoFlash.style.zIndex = '100000';
+            zaWarudoFlash.style.opacity = '1';
+            zaWarudoFlash.style.transition = 'opacity 0.2s';
+            document.body.appendChild(zaWarudoFlash);
+
+            // ZA WARUDO text
+            const zaWarudoText = document.createElement('div');
+            zaWarudoText.style.position = 'fixed';
+            zaWarudoText.style.top = '50%';
+            zaWarudoText.style.left = '50%';
+            zaWarudoText.style.transform = 'translate(-50%, -50%) scale(0)';
+            zaWarudoText.style.fontSize = '120px';
+            zaWarudoText.style.fontWeight = 'bold';
+            zaWarudoText.style.color = '#FFD700';
+            zaWarudoText.style.fontFamily = 'serif';
+            zaWarudoText.style.zIndex = '100001';
+            zaWarudoText.style.textShadow = '6px 6px 12px rgba(0,0,0,1), 0 0 30px #FFD700';
+            zaWarudoText.style.transition = 'transform 0.3s ease-out';
+            zaWarudoText.style.webkitTextStroke = '3px #000000';
+            zaWarudoText.textContent = 'ZA WARUDO!';
+            document.body.appendChild(zaWarudoText);
+
+            // Toast for audio effect
+            toast('⏰ ZA WARUDO! TOKI WO TOMARE!', {
+              duration: 4000,
+              style: {
+                background: '#000',
+                color: '#FFD700',
+                fontSize: '20px',
+                fontWeight: 'bold',
+                fontFamily: 'serif',
+                border: '3px solid #FFD700'
+              }
+            });
+
+            // Animate ZA WARUDO text
+            setTimeout(() => {
+              zaWarudoFlash.style.opacity = '0';
+              zaWarudoText.style.transform = 'translate(-50%, -50%) scale(1)';
+            }, 100);
+
+            // Clock ticking effect
+            const clockEmoji = document.createElement('div');
+            clockEmoji.style.position = 'fixed';
+            clockEmoji.style.top = '20px';
+            clockEmoji.style.left = '50%';
+            clockEmoji.style.transform = 'translateX(-50%)';
+            clockEmoji.style.fontSize = '80px';
+            clockEmoji.style.zIndex = '100001';
+            clockEmoji.style.animation = 'pulse 0.5s ease-in-out infinite';
+            clockEmoji.textContent = '⏱️';
+            document.body.appendChild(clockEmoji);
+
+            // Remove everything after 4 seconds
+            setTimeout(() => {
+              zaWarudoFlash.remove();
+              zaWarudoText.remove();
+              clockEmoji.remove();
+            }, 4000);
+            break;
+
+          case 'toBeContinued':
+            // To Be Continued - Episode Ending
+            // Create sepia freeze frame overlay
+            const jojoOverlay = document.createElement('div');
+            jojoOverlay.style.position = 'fixed';
+            jojoOverlay.style.top = '0';
+            jojoOverlay.style.left = '0';
+            jojoOverlay.style.width = '100%';
+            jojoOverlay.style.height = '100%';
+            jojoOverlay.style.backgroundColor = 'rgba(112, 66, 20, 0.4)';
+            jojoOverlay.style.zIndex = '99998';
+            jojoOverlay.style.pointerEvents = 'none';
+            jojoOverlay.style.filter = 'sepia(1)';
+            document.body.appendChild(jojoOverlay);
+
+            // Create "To Be Continued" arrow
+            const jojoArrow = document.createElement('div');
+            jojoArrow.style.position = 'fixed';
+            jojoArrow.style.bottom = '100px';
+            jojoArrow.style.right = '-500px';
+            jojoArrow.style.fontSize = '60px';
+            jojoArrow.style.fontWeight = 'bold';
+            jojoArrow.style.color = '#ffffff';
+            jojoArrow.style.fontFamily = 'serif';
+            jojoArrow.style.zIndex = '99999';
+            jojoArrow.style.textShadow = '4px 4px 8px rgba(0,0,0,0.8)';
+            jojoArrow.style.transform = 'rotate(-5deg)';
+            jojoArrow.style.transition = 'right 1.5s ease-out';
+            jojoArrow.innerHTML = '<span style="font-size: 80px;">⬅</span> To Be Continued';
+            document.body.appendChild(jojoArrow);
+
+            // Slide in the arrow
+            setTimeout(() => {
+              jojoArrow.style.right = '50px';
+            }, 100);
+
+            // Add menacing symbols (ゴゴゴゴ)
+            const menacingSymbols = ['ゴ', 'ゴ', 'ゴ', 'ゴ', 'ゴ', 'ゴ', 'ゴ', 'ゴ'];
+            const menacingElements: HTMLDivElement[] = [];
+            
+            menacingSymbols.forEach((symbol, i) => {
+              const menacing = document.createElement('div');
+              menacing.textContent = symbol;
+              menacing.style.position = 'fixed';
+              menacing.style.fontSize = '48px';
+              menacing.style.fontWeight = 'bold';
+              menacing.style.color = '#ffffff';
+              menacing.style.zIndex = '99999';
+              menacing.style.opacity = '0';
+              menacing.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+              menacing.style.transition = 'opacity 0.5s';
+              menacing.style.animation = 'menacing-float 2s ease-in-out infinite';
+              
+              // Position randomly
+              menacing.style.top = (Math.random() * 60 + 10) + '%';
+              menacing.style.left = (Math.random() * 80 + 10) + '%';
+              
+              document.body.appendChild(menacing);
+              menacingElements.push(menacing);
+              
+              // Fade in with delay
+              setTimeout(() => {
+                menacing.style.opacity = '0.8';
+              }, i * 150);
+            });
+
+            // Play sound effect (visual representation)
+            toast('⬅️ TO BE CONTINUED...', {
+              duration: 6000,
+              style: {
+                background: '#8B4513',
+                color: '#ffffff',
+                fontSize: '24px',
+                fontWeight: 'bold',
+                fontFamily: 'serif',
+                border: '4px solid #654321',
+                textShadow: '2px 2px 4px rgba(0,0,0,0.5)'
+              }
+            });
+
+            // Remove everything after 6 seconds
+            setTimeout(() => {
+              jojoOverlay.remove();
+              jojoArrow.remove();
+              menacingElements.forEach(el => el.remove());
+            }, 6000);
             break;
         }
       })
