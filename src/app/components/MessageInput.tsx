@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Reply, Pencil, X, Smile, Send } from 'lucide-react';
+import { Reply, Pencil, X, Smile, Send, Paperclip } from 'lucide-react';
 import { RefObject } from 'react';
 
 interface Message {
@@ -23,6 +23,7 @@ interface MessageInputProps {
   onSubmit: (e: React.FormEvent) => void;
   onEdit: () => void;
   onStickerClick: () => void;
+  onAttachClick?: () => void;
   getSenderName: (id: string) => string;
   messageInputRef: RefObject<HTMLInputElement>;
   messagesEndRef: RefObject<HTMLDivElement>;
@@ -39,6 +40,7 @@ export function MessageInput({
   onSubmit,
   onEdit,
   onStickerClick,
+  onAttachClick,
   getSenderName,
   messageInputRef,
   messagesEndRef
@@ -128,7 +130,13 @@ export function MessageInput({
           type="text"
           placeholder={editingMessage ? "Edit your message..." : "Type a message... 💬"}
           value={messageText}
-          onChange={(e) => setMessageText(e.target.value)}
+          onChange={(e) => {
+            setMessageText(e.target.value);
+            // Also update editMessageText when editing
+            if (editingMessage) {
+              setEditMessageText(e.target.value);
+            }
+          }}
           onFocus={() => {
             // Only scroll to bottom on focus if user is near bottom (for mobile keyboard)
             const scrollViewport = messagesEndRef.current?.parentElement?.parentElement;
@@ -156,6 +164,19 @@ export function MessageInput({
             {editingMessage ? <Pencil className="size-5" /> : <Send className="size-5" />}
           </Button>
         </motion.div>
+        {onAttachClick && (
+          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={onAttachClick}
+              className="hover:bg-gradient-to-br hover:from-yellow-100 hover:to-orange-100 dark:hover:from-yellow-900/40 dark:hover:to-orange-900/40 transition-all"
+            >
+              <Paperclip className="size-5" />
+            </Button>
+          </motion.div>
+        )}
       </form>
     </div>
   );

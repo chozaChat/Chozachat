@@ -22,6 +22,8 @@ import { CustomPrompt } from "../components/CustomPrompt";
 import { StickerPicker } from "../components/StickerPicker";
 import { MessageItem } from "../components/MessageItem";
 import { MessageInput } from "../components/MessageInput";
+import { PollCreator, PollData } from "../components/PollCreator";
+import { PollMessage } from "../components/PollMessage";
 import { AnnouncementBanner } from "../components/AnnouncementBanner";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -132,6 +134,13 @@ interface Message {
     content: string;
     senderName: string;
   };
+  poll?: PollData & {
+    votes?: Array<{
+      userId: string;
+      optionIds: string[];
+      userName: string;
+    }>;
+  };
 }
 
 export default function ChatMain() {
@@ -154,6 +163,7 @@ export default function ChatMain() {
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news' | 'channel', id: string, name: string, friendData?: Friend, admins?: string[], verified?: boolean } | null>(null);
   const [messageText, setMessageText] = useState("");
+  const [pollCreatorOpen, setPollCreatorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<(User | Channel)[]>([]);
   const [groupName, setGroupName] = useState("");
@@ -276,7 +286,7 @@ export default function ChatMain() {
   const SERVER_ID = 'make-server-a1c86d03';
   
   // FRONTEND VERSION FOR DEBUGGING
-  const FRONTEND_VERSION = 'v31-EDIT-DEBUG-ENHANCED';
+  const FRONTEND_VERSION = '2024-04-08-v32-POLL-BACKEND';
   
   // Helper function to check if a message is just a sticker (emoji only, no other text)
   const isOnlySticker = (text: string) => {
@@ -455,6 +465,10 @@ export default function ChatMain() {
       return;
     }
 
+    // Clear message input when switching chats
+    setMessageText("");
+    setReplyingTo(null);
+
     // Check server version
     const checkServerVersion = async () => {
       try {
@@ -476,15 +490,15 @@ export default function ChatMain() {
         console.log("=== SERVER VERSION CHECK ===");
         console.log("Server version:", data.version);
         console.log("Server timestamp:", data.timestamp);
-        console.log("Expected version: 2024-04-05-v31-EDIT-DEBUG-ENHANCED");
+        console.log("Expected version: 2024-04-08-v32-POLL-BACKEND");
         
         if (!data.version) {
           console.warn("⚠️ WARNING: Server did not return version info. Server may not be deployed.");
           console.warn("Response data:", data);
-        } else if (data.version !== "2024-04-05-v31-EDIT-DEBUG-ENHANCED") {
+        } else if (data.version !== "2024-04-08-v32-POLL-BACKEND") {
           console.warn("⚠️ WARNING: Server version mismatch! Old code might be running.");
           console.warn("⚠️ Current version:", data.version);
-          toast.error(`Server version mismatch! Expected v31-EDIT-DEBUG-ENHANCED, got ${data.version}`, { duration: 10000 });
+          toast.error(`Server version mismatch! Expected 2024-04-08-v32-POLL-BACKEND, got ${data.version}`, { duration: 10000 });
         } else {
           console.log("✓ Server version is correct!");
           // Success toast removed - only show errors
@@ -550,6 +564,24 @@ export default function ChatMain() {
           // Show notification if not from current user
           if (payload && payload.payload) {
             const messageData = payload.payload;
+            
+            // If message data is included in the payload, add it directly
+            if (messageData.message) {
+              console.log('📊 Adding message from broadcast with poll:', messageData.message);
+              setMessages(prev => {
+                // Check if message already exists
+                const exists = prev.some(m => m.id === messageData.message.id);
+                if (!exists) {
+                  return [...prev, messageData.message];
+                }
+                return prev;
+              });
+              setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+            } else {
+              // Fallback: reload messages from server
+              loadMessages(selectedChat.type, selectedChat.id);
+            }
+            
             if (messageData.senderId !== userId) {
               // Get sender info
               const sender = friends.find(f => f.id === messageData.senderId) || 
@@ -557,8 +589,6 @@ export default function ChatMain() {
               showMessageNotification(sender.name, messageData.text, sender.emoji);
             }
           }
-          // Reload messages when a new message is broadcast
-          loadMessages(selectedChat.type, selectedChat.id);
         })
         .on('broadcast', { event: 'message-edited' }, (payload: any) => {
           console.log('Received message edit:', payload);
@@ -717,7 +747,7 @@ export default function ChatMain() {
           console.log('[Troll] ✓ Successfully subscribed to troll channel');
           setTrollChannelConnected(true);
         } else if (status === 'CHANNEL_ERROR') {
-          console.warn('[Troll] Channel connection error:', status);
+          // Silently handle channel errors - this is normal with Supabase Realtime
           setTrollChannelConnected(false);
         } else if (status === 'TIMED_OUT') {
           // Silently handle timeout - this is normal with Supabase Realtime
@@ -997,8 +1027,13 @@ export default function ChatMain() {
       const data = await response.json();
       console.log(`✅ [loadMessages] Loaded ${data.messages?.length || 0} messages for ${chatType}:${chatId}`);
       console.log('📝 [loadMessages] Last message:', JSON.stringify(data.messages?.[data.messages.length - 1]));
-      console.log('📝 [loadMessages] First 3 messages content:', data.messages?.slice(0, 3).map((m: any) => ({id: m.id, content: m.content, text: m.text, edited: m.edited})));
+      console.log('📝 [loadMessages] First 3 messages content:', data.messages?.slice(0, 3).map((m: any) => ({id: m.id, content: m.content, text: m.text, edited: m.edited, poll: m.poll})));
       if (data.messages) {
+        // Log any messages with poll data for debugging
+        const pollMessages = data.messages.filter((m: any) => m.poll);
+        if (pollMessages.length > 0) {
+          console.log('📊 [loadMessages] Found poll messages:', pollMessages.map((m: any) => ({id: m.id, poll: m.poll})));
+        }
         setMessages(data.messages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
       }
@@ -1036,9 +1071,7 @@ export default function ChatMain() {
       console.log("Response status:", response.status);
       
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error("Failed to connect to CFS, failed to load friend requests: CEID", response.status, errorData);
-        toast.error(`Failed to connect to CFS, failed to load friend requests: CEID ${errorData.message || errorData.error || 'No error description / unknown'}`);
+        // Silently handle friend requests load failure
         return;
       }
       
@@ -1047,8 +1080,7 @@ export default function ChatMain() {
         setFriendRequests(data.requests);
       }
     } catch (error) {
-      console.error("Failed to load friend requests:", error);
-      toast.error(`Failed to connect to CFS, failed to load friend requests: CEID ${error}`);
+      // Silently handle network errors - friend requests are not critical
     }
   };
 
@@ -1213,7 +1245,7 @@ export default function ChatMain() {
       );
       
       if (!response.ok) {
-        console.error("Failed to load stats:", response.status);
+        // Silently handle stats load failure
         return;
       }
       
@@ -1225,7 +1257,7 @@ export default function ChatMain() {
         setOnlineUsers(data.onlineUsers);
       }
     } catch (error) {
-      console.error("Failed to load stats:", error);
+      // Silently handle network errors - stats are not critical
     }
   };
 
@@ -1713,7 +1745,14 @@ export default function ChatMain() {
 
     try {
       const editUrl = `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/message/${editingMessage.id}`;
+      const requestBody = { 
+        content: editMessageText,
+        chatId: selectedChat?.id,
+        chatType: selectedChat?.type
+      };
+      
       console.log('🔧 [CLIENT EDIT] URL:', editUrl);
+      console.log('🔧 [CLIENT EDIT] Request body:', JSON.stringify(requestBody, null, 2));
       
       const response = await fetch(editUrl, {
         method: 'PUT',
@@ -1722,11 +1761,7 @@ export default function ChatMain() {
           'Authorization': `Bearer ${publicAnonKey}`,
           'X-User-Id': userId || ''
         },
-        body: JSON.stringify({ 
-          content: editMessageText,
-          chatId: selectedChat?.id,
-          chatType: selectedChat?.type
-        })
+        body: JSON.stringify(requestBody)
       });
 
       console.log('🔧 [CLIENT EDIT] Response status:', response.status);
@@ -1743,7 +1778,7 @@ export default function ChatMain() {
           setMessages(prev => prev.map(m => 
             m.id === editingMessage.id ? updatedMessage.message : m
           ));
-          console.log('🔧 [CLIENT EDIT] ✅ Local state updated!');
+          console.log('🔧 [CLIENT EDIT] �� Local state updated!');
         }
         
         // Also reload messages from server to ensure we have the latest data
@@ -1771,10 +1806,12 @@ export default function ChatMain() {
         console.log('🔧 [CLIENT EDIT] ========== EDIT COMPLETE ==========');
       } else {
         const data = await response.json();
+        console.log('🔧 [CLIENT EDIT] ❌ Error response:', JSON.stringify(data, null, 2));
+        console.log('🔧 [CLIENT EDIT] Status:', response.status);
         toast.error(data.error || "Failed to edit message");
       }
     } catch (error) {
-      console.error("Edit message error:", error);
+      console.error("🔧 [CLIENT EDIT] ❌ Exception:", error);
       toast.error("Failed to edit message");
     }
   };
@@ -2075,6 +2112,189 @@ export default function ChatMain() {
       // Remove optimistic message on error
       setMessages(prev => prev.filter(m => m.id !== tempId));
       setMessageText(messageContent);
+    }
+  };
+
+  const handleCreatePoll = async (pollData: PollData) => {
+    if (!selectedChat || !userId) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+          body: JSON.stringify({
+            chatId: selectedChat.id,
+            content: `📊 Poll: ${pollData.question}`,
+            chatType: selectedChat.type,
+            poll: pollData
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        toast.error(errorData.error || "Failed to create poll");
+        return;
+      }
+
+      const data = await response.json();
+      
+      console.log('📊 Poll created, server response:', data);
+      console.log('📊 Message object from server:', data.message);
+      console.log('📊 Poll data in message:', data.message?.poll);
+      
+      // Server now returns poll data, but ensure votes array exists
+      if (data.message.poll && !data.message.poll.votes) {
+        data.message.poll.votes = [];
+      }
+      
+      // Add poll message to messages
+      setMessages(prev => [...prev, data.message]);
+      
+      // Broadcast new message via Realtime
+      if (messageChannelRef.current) {
+        await messageChannelRef.current.send({
+          type: 'broadcast',
+          event: 'new-message',
+          payload: { 
+            chatType: selectedChat.type, 
+            chatId: selectedChat.id,
+            message: data.message
+          }
+        });
+      }
+
+      toast.success("Poll created!");
+    } catch (error) {
+      console.error("Create poll error:", error);
+      toast.error("Failed to create poll");
+    }
+  };
+
+  const handleVotePoll = async (pollId: string, optionIds: string[]) => {
+    if (!userId || !currentUser) return;
+
+    try {
+      // Update poll votes in local state
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === pollId && msg.poll) {
+          const updatedVotes = msg.poll.votes || [];
+          // Remove any existing vote from this user
+          const filteredVotes = updatedVotes.filter(v => v.userId !== userId);
+          // Add new vote
+          return {
+            ...msg,
+            poll: {
+              ...msg.poll,
+              votes: [...filteredVotes, { userId, optionIds, userName: currentUser.name }]
+            }
+          };
+        }
+        return msg;
+      }));
+
+      // Send to server
+      if (selectedChat) {
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/polls/${pollId}/vote`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId,
+              },
+              body: JSON.stringify({
+                optionIds,
+                userName: currentUser.name,
+                chatId: selectedChat.id,
+                chatType: selectedChat.type
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            console.error("Server poll vote failed:", errorData);
+            toast.error(errorData.error || "Failed to save vote to server");
+          } else {
+            console.log("✅ Poll vote saved to server");
+          }
+        } catch (error) {
+          console.error("Server poll endpoint error:", error);
+          toast.error("Failed to save vote to server");
+        }
+      }
+
+      toast.success("Vote recorded!");
+    } catch (error) {
+      console.error("Vote poll error:", error);
+      toast.error("Failed to vote");
+    }
+  };
+
+  const handleRetractVote = async (pollId: string) => {
+    if (!userId) return;
+
+    try {
+      // Remove vote from local state
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === pollId && msg.poll) {
+          const updatedVotes = (msg.poll.votes || []).filter(v => v.userId !== userId);
+          return {
+            ...msg,
+            poll: {
+              ...msg.poll,
+              votes: updatedVotes
+            }
+          };
+        }
+        return msg;
+      }));
+
+      // Send to server
+      if (selectedChat) {
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/polls/${pollId}/vote`,
+            {
+              method: "DELETE",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId,
+              },
+              body: JSON.stringify({
+                chatId: selectedChat.id,
+                chatType: selectedChat.type
+              }),
+            }
+          );
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            console.error("Server poll retract failed:", errorData);
+            toast.error(errorData.error || "Failed to retract vote on server");
+          } else {
+            console.log("✅ Poll vote retracted on server");
+          }
+        } catch (error) {
+          console.error("Server poll endpoint error:", error);
+          toast.error("Failed to retract vote on server");
+        }
+      }
+
+      toast.success("Vote retracted!");
+    } catch (error) {
+      console.error("Retract vote error:", error);
+      toast.error("Failed to retract vote");
     }
   };
 
@@ -3187,10 +3407,10 @@ export default function ChatMain() {
             {searchResults.map((result: any) => (
               <div key={result.id} className="flex items-center gap-3 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
                 <Avatar className="flex-shrink-0">
-                  <AvatarFallback className={result.username ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'}>
+                  <AvatarFallback className={result.type === 'channel' ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'}>
                     {result.emoji ? (
                       <span className="text-xl">{result.emoji}</span>
-                    ) : result.username ? (
+                    ) : result.type === 'channel' ? (
                       <Hash className="size-4" />
                     ) : (
                       result.name?.charAt(0)?.toUpperCase() || '?'
@@ -3203,7 +3423,7 @@ export default function ChatMain() {
                     @{result.username || result.email?.split('@')[0]}
                   </div>
                 </div>
-                {result.type === 'channel' || result.username ? (
+                {result.type === 'channel' ? (
                   <Button size="sm" onClick={() => handleJoinChannel(result.id)}>
                     Join
                   </Button>
@@ -3286,7 +3506,7 @@ export default function ChatMain() {
       </Dialog>
     </div>
 
-    <ScrollArea className="flex-1 px-2">
+    <ScrollArea className="flex-1 px-2 min-h-0">
       {/* News Channel - Small and less noticeable */}
       <motion.button
         whileHover={{ scale: 1.01, x: 2 }}
@@ -3730,10 +3950,10 @@ export default function ChatMain() {
                 </Avatar>
                 <div>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span key="name" className="font-semibold dark:text-white">{selectedChat.name}</span>
-                    {selectedChat.type === 'friend' && selectedChat.friendData?.verified && <span key="friend-verified">{renderVerifiedBadge()}</span>}
-                    {selectedChat.type === 'channel' && selectedChat.verified && <span key="channel-verified">{renderVerifiedBadge()}</span>}
-                    {selectedChat.type === 'friend' && <span key="tag">{renderTagBadge(selectedChat.friendData?.tag, isUserAdmin(selectedChat.friendData), selectedChat.friendData?.tagColor)}</span>}
+                    <span className="font-semibold dark:text-white">{selectedChat.name}</span>
+                    {selectedChat.type === 'friend' && selectedChat.friendData?.verified && renderVerifiedBadge()}
+                    {selectedChat.type === 'channel' && selectedChat.verified && renderVerifiedBadge()}
+                    {selectedChat.type === 'friend' && renderTagBadge(selectedChat.friendData?.tag, isUserAdmin(selectedChat.friendData), selectedChat.friendData?.tagColor)}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     {selectedChat.type === 'group' ? 'Group chat' : selectedChat.type === 'news' ? 'News Channel' : selectedChat.type === 'ai' ? 'Gemini 2.5 Flash' : selectedChat.type === 'channel' ? 'Channel' : 'Direct message'}
@@ -3750,6 +3970,22 @@ export default function ChatMain() {
                     const isOwn = message.senderId === userId;
                     const isAI = message.senderId === 'ai-assistant';
                     
+                    // Debug log for poll messages
+                    if (message.poll) {
+                      console.log('🎯 Rendering poll message:', {
+                        id: message.id,
+                        hasPoll: !!message.poll,
+                        pollQuestion: message.poll?.question,
+                        pollOptions: message.poll?.options?.length
+                      });
+                    }
+                    
+                    // Check if this looks like a poll message but poll data is missing
+                    const looksLikePoll = !message.poll && message.content?.startsWith('📊 Poll:');
+                    if (looksLikePoll) {
+                      console.warn('⚠️ Poll message missing poll data:', message.id, message.content);
+                    }
+                    
                     return (
                       <motion.div
                         key={message.id}
@@ -3765,27 +4001,70 @@ export default function ChatMain() {
                         }}
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
-                        <MessageItem
-                          message={message}
-                          isOwn={isOwn}
-                          isAI={isAI}
-                          chatType={selectedChat.type as 'friend' | 'group' | 'news' | 'channel' | 'ai'}
-                          getSenderName={getSenderName}
-                          getSenderEmoji={getSenderEmoji}
-                          getSenderIsVerified={getSenderIsVerified}
-                          getSenderTag={getSenderTag}
-                          getSenderIsAdmin={getSenderIsAdmin}
-                          getSenderTagColor={getSenderTagColor}
-                          renderVerifiedBadge={renderVerifiedBadge}
-                          renderTagBadge={renderTagBadge}
-                          onReply={handleReplyToMessage}
-                          onEdit={(msg, content) => {
-                            setEditingMessage(msg);
-                            setEditMessageText(content);
-                            setMessageText(content);
-                          }}
-                          onDelete={handleDeleteMessage}
-                        />
+                        {message.poll ? (
+                          <div className="max-w-2xl w-full">
+                            <PollMessage
+                              poll={message.poll}
+                              pollId={message.id}
+                              votes={message.poll.votes || []}
+                              currentUserId={userId || ''}
+                              onVote={handleVotePoll}
+                              onRetractVote={handleRetractVote}
+                              isOwnPoll={isOwn}
+                              totalChatMembers={
+                                selectedChat.type === 'friend' 
+                                  ? 1 
+                                  : selectedChat.type === 'group'
+                                  ? (channels.find(c => c.id === selectedChat.id && c.type === 'group')?.memberCount || 1) - 1
+                                  : selectedChat.type === 'channel'
+                                  ? (channels.find(c => c.id === selectedChat.id && c.type === 'channel')?.memberCount || 1) - 1
+                                  : undefined
+                              }
+                              onRefreshPoll={() => {
+                                if (selectedChat) {
+                                  loadMessages(selectedChat.type, selectedChat.id);
+                                }
+                              }}
+                            />
+                          </div>
+                        ) : looksLikePoll ? (
+                          <div className="max-w-md p-4 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700">
+                            <div className="flex items-start gap-2">
+                              <span className="text-2xl">⚠️</span>
+                              <div className="flex-1">
+                                <div className="font-semibold text-yellow-800 dark:text-yellow-200">Poll Data Missing</div>
+                                <div className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                                  This poll's data is not available. The backend needs to return poll data in the message response.
+                                </div>
+                                <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2 font-mono">
+                                  {message.content}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <MessageItem
+                            message={message}
+                            isOwn={isOwn}
+                            isAI={isAI}
+                            chatType={selectedChat.type as 'friend' | 'group' | 'news' | 'channel' | 'ai'}
+                            getSenderName={getSenderName}
+                            getSenderEmoji={getSenderEmoji}
+                            getSenderIsVerified={getSenderIsVerified}
+                            getSenderTag={getSenderTag}
+                            getSenderIsAdmin={getSenderIsAdmin}
+                            getSenderTagColor={getSenderTagColor}
+                            renderVerifiedBadge={renderVerifiedBadge}
+                            renderTagBadge={renderTagBadge}
+                            onReply={handleReplyToMessage}
+                            onEdit={(msg, content) => {
+                              setEditingMessage(msg);
+                              setEditMessageText(content);
+                              setMessageText(content);
+                            }}
+                            onDelete={handleDeleteMessage}
+                          />
+                        )}
                       </motion.div>
                     );
                   })}
@@ -3820,6 +4099,7 @@ export default function ChatMain() {
                   onSubmit={handleSendMessage}
                   onEdit={handleEditMessage}
                   onStickerClick={() => {/* Emoji picker logic */}}
+                  onAttachClick={() => setPollCreatorOpen(true)}
                   getSenderName={getSenderName}
                   messageInputRef={messageInputRef}
                   messagesEndRef={messagesEndRef}
@@ -5439,6 +5719,13 @@ export default function ChatMain() {
             toast.error("Failed to send sticker");
           }
         }}
+      />
+
+      {/* Poll Creator */}
+      <PollCreator
+        open={pollCreatorOpen}
+        onOpenChange={setPollCreatorOpen}
+        onCreatePoll={handleCreatePoll}
       />
 
       {/* Announcement Banner */}

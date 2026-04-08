@@ -1,0 +1,5 @@
+Line 3206 needs to be changed from:
+{result.type === 'channel' || result.username ? (
+
+to:
+{result.type === 'channel' ? (

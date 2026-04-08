@@ -5,9 +5,9 @@ import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
-// VERSION: 2024-04-05-v31-EDIT-DEBUG-ENHANCED
+// VERSION: 2024-04-08-v32-POLL-BACKEND
 
-console.log('🚀🚀🚀 SERVER STARTING - VERSION: v31-EDIT-DEBUG-ENHANCED 🚀🚀🚀');
+console.log('🚀🚀🚀 SERVER STARTING - VERSION: v32-POLL-BACKEND 🚀🚀🚀');
 console.log('🚀🚀🚀 TIMESTAMP:', Date.now(), '🚀🚀🚀');
 console.log('🚀🚀🚀 DEPLOYED AT:', new Date().toISOString(), '🚀🚀🚀');
 
@@ -91,12 +91,12 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 
 // Health check endpoint
 app.get("/make-server-a1c86d03/health", (c) => {
-  return c.json({ status: "ok", version: "2024-04-05-v31-EDIT-DEBUG-ENHANCED", timestamp: new Date().toISOString() });
+  return c.json({ status: "ok", version: "2024-04-08-v32-POLL-BACKEND", timestamp: new Date().toISOString() });
 });
 
 // Version check endpoint
 app.get("/make-server-a1c86d03/version", (c) => {
-  return c.json({ version: "2024-04-05-v31-EDIT-DEBUG-ENHANCED", timestamp: Date.now() });
+  return c.json({ version: "2024-04-08-v32-POLL-BACKEND", timestamp: Date.now() });
 });
 
 const SERVER_ID = 'make-server-a1c86d03';
@@ -1593,10 +1593,11 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
     }
 
     const body = await c.req.json();
-    const { chatId, chatType, content, replyTo } = body;
+    const { chatId, chatType, content, replyTo, poll } = body;
 
     console.log('📨 [SEND MESSAGE] Received body:', JSON.stringify(body));
     console.log('📨 [SEND MESSAGE] replyTo:', JSON.stringify(replyTo));
+    console.log('📊 [SEND MESSAGE] poll:', JSON.stringify(poll));
 
     if (!chatId || !chatType || !content) {
       return c.json({ error: 'chatId, chatType, and content are required' }, 400);
@@ -1630,6 +1631,15 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
     if (replyTo) {
       message.replyTo = replyTo;
       console.log('📨 [SEND MESSAGE] ✅ Saving message WITH reply:', JSON.stringify(message));
+    }
+
+    // Include poll if provided
+    if (poll) {
+      message.poll = {
+        ...poll,
+        votes: poll.votes || [] // Initialize votes array if not present
+      };
+      console.log('📊 [SEND MESSAGE] ✅ Saving message WITH poll:', JSON.stringify(message.poll));
     }
 
     messages.push(message);
@@ -1801,6 +1811,130 @@ app.delete(`/${SERVER_ID}/message/:messageId`, async (c) => {
   } catch (error: any) {
     console.error('Delete message error:', error);
     return c.json({ error: 'Failed to delete message' }, 500);
+  }
+});
+
+// Vote on a poll
+app.post(`/${SERVER_ID}/polls/:pollId/vote`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+    const body = await c.req.json();
+    const { optionIds, chatId, chatType } = body;
+
+    console.log('🗳️ [POLL VOTE] User:', userId, 'voting on poll:', pollId);
+    console.log('🗳️ [POLL VOTE] Selected options:', optionIds);
+    console.log('🗳️ [POLL VOTE] ChatId:', chatId, 'ChatType:', chatType);
+
+    if (!optionIds || !Array.isArray(optionIds) || optionIds.length === 0) {
+      return c.json({ error: 'optionIds array is required' }, 400);
+    }
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    // Get user info for userName
+    const user = await kv.get(`user:${userId}`);
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === pollId);
+    
+    if (msgIndex === -1) {
+      console.error('🗳️ [POLL VOTE] Poll message not found:', pollId);
+      return c.json({ error: 'Poll not found' }, 404);
+    }
+
+    const message = messages[msgIndex];
+    
+    if (!message.poll) {
+      return c.json({ error: 'Message is not a poll' }, 400);
+    }
+
+    // Update votes
+    const votes = message.poll.votes || [];
+    // Remove existing vote from this user
+    const filteredVotes = votes.filter((v: any) => v.userId !== userId);
+    // Add new vote
+    filteredVotes.push({
+      userId,
+      optionIds,
+      userName: user.name
+    });
+
+    message.poll.votes = filteredVotes;
+    messages[msgIndex] = message;
+    
+    await kv.set(messageKey, messages);
+
+    console.log('🗳️ [POLL VOTE] ✅ Vote saved successfully');
+
+    return c.json({ success: true, poll: message.poll });
+  } catch (error: any) {
+    console.error('Poll vote error:', error);
+    return c.json({ error: 'Failed to vote on poll' }, 500);
+  }
+});
+
+// Retract vote on a poll
+app.delete(`/${SERVER_ID}/polls/:pollId/vote`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    console.log('🗳️ [POLL RETRACT] User:', userId, 'retracting vote on poll:', pollId);
+    console.log('🗳️ [POLL RETRACT] ChatId:', chatId, 'ChatType:', chatType);
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === pollId);
+    
+    if (msgIndex === -1) {
+      console.error('🗳️ [POLL RETRACT] Poll message not found:', pollId);
+      return c.json({ error: 'Poll not found' }, 404);
+    }
+
+    const message = messages[msgIndex];
+    
+    if (!message.poll) {
+      return c.json({ error: 'Message is not a poll' }, 400);
+    }
+
+    // Remove vote from this user
+    const votes = message.poll.votes || [];
+    message.poll.votes = votes.filter((v: any) => v.userId !== userId);
+    messages[msgIndex] = message;
+    
+    await kv.set(messageKey, messages);
+
+    console.log('🗳️ [POLL RETRACT] ✅ Vote retracted successfully');
+
+    return c.json({ success: true, poll: message.poll });
+  } catch (error: any) {
+    console.error('Poll retract error:', error);
+    return c.json({ error: 'Failed to retract vote' }, 500);
   }
 });
 
