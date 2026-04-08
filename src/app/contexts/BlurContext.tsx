@@ -10,7 +10,7 @@ const BlurContext = createContext<BlurContextType | undefined>(undefined);
 export const BlurProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [blurStrength, setBlurStrengthState] = useState(() => {
     const saved = localStorage.getItem('blurStrength');
-    return saved !== null ? parseInt(saved) : 20; // Default to 20px
+    return saved !== null ? parseInt(saved) : 10; // Default to 10px
   });
 
   useEffect(() => {

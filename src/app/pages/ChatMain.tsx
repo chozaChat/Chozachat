@@ -745,6 +745,57 @@ export default function ChatMain() {
 
             setTimeout(() => emojiContainer.remove(), 6000);
             break;
+
+          case 'glitchEffect':
+            const glitchElement = document.body;
+            glitchElement.style.animation = 'glitch 0.3s infinite';
+            setTimeout(() => {
+              glitchElement.style.animation = '';
+            }, 3000);
+            break;
+
+          case 'discoMode':
+            const disco = setInterval(() => {
+              const randomColor = `hsl(${Math.random() * 360}, 70%, 50%)`;
+              document.body.style.backgroundColor = randomColor;
+            }, 200);
+            setTimeout(() => {
+              clearInterval(disco);
+              document.body.style.backgroundColor = '';
+            }, 5000);
+            break;
+
+          case 'flipScreen':
+            document.body.style.transform = 'rotate(180deg)';
+            setTimeout(() => {
+              document.body.style.transform = '';
+            }, 5000);
+            break;
+
+          case 'rickRoll':
+            toast('🎵 Never gonna give you up, never gonna let you down! 🎵', {
+              duration: 8000,
+              style: {
+                background: 'linear-gradient(45deg, #ff0080, #ff8c00)',
+                color: 'white',
+                fontSize: '18px',
+                fontWeight: 'bold',
+                textAlign: 'center'
+              }
+            });
+            // Show dancing emoji animation
+            const rickContainer = document.createElement('div');
+            rickContainer.style.position = 'fixed';
+            rickContainer.style.top = '50%';
+            rickContainer.style.left = '50%';
+            rickContainer.style.transform = 'translate(-50%, -50%)';
+            rickContainer.style.fontSize = '100px';
+            rickContainer.style.zIndex = '99999';
+            rickContainer.style.animation = 'bounce 0.5s infinite';
+            rickContainer.textContent = '🕺💃';
+            document.body.appendChild(rickContainer);
+            setTimeout(() => rickContainer.remove(), 8000);
+            break;
         }
       })
       .subscribe((status: string) => {
@@ -5917,6 +5968,7 @@ export default function ChatMain() {
           id={currentAnnouncement.id}
           title={currentAnnouncement.title}
           description={currentAnnouncement.description}
+          buttonText={currentAnnouncement.buttonText}
           onDismiss={async () => {
             try {
               // Mark as dismissed on the server

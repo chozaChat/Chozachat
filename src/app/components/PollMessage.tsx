@@ -398,15 +398,17 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 </>
               )}
             </Button>
-            {!poll.anonymous && totalVotes > 0 && shouldShowVoterNames && (
+            {!poll.anonymous && totalVotes > 0 && (
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 onClick={() => setShowVoters(!showVoters)}
                 className="dark:border-gray-700"
+                disabled={!shouldShowVoterNames}
               >
                 {showVoters ? '👤 Hide' : '👥 Show'} Voters
+                {!shouldShowVoterNames && ' 🔒'}
               </Button>
             )}
             {onRetractVote && !poll.victorineMode && !poll.stopped && !isExpired && (

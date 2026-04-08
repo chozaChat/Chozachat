@@ -115,6 +115,7 @@ export default function AdminPanel() {
   // Announcement states
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementDescription, setAnnouncementDescription] = useState("");
+  const [announcementButtonText, setAnnouncementButtonText] = useState("Got it!");
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [currentAnnouncement, setCurrentAnnouncement] = useState<any>(null);
 
@@ -317,6 +318,7 @@ export default function AdminPanel() {
           setCurrentAnnouncement(data.announcement);
           setAnnouncementTitle(data.announcement.title || "");
           setAnnouncementDescription(data.announcement.description || "");
+          setAnnouncementButtonText(data.announcement.buttonText || "Got it!");
           setAnnouncementEnabled(data.announcement.enabled || false);
         }
       }
@@ -349,6 +351,7 @@ export default function AdminPanel() {
           body: JSON.stringify({
             title: announcementTitle,
             description: announcementDescription,
+            buttonText: announcementButtonText,
             enabled: announcementEnabled,
           }),
         }
@@ -1064,6 +1067,122 @@ export default function AdminPanel() {
     }
   };
 
+  const handleGlitchEffect = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'glitchEffect', timestamp: Date.now() }
+      });
+      
+      toast.success("📺 Glitch effect activated!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] Glitch error:", error);
+      toast.error("Failed to activate glitch");
+    }
+  };
+
+  const handleDiscoMode = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'discoMode', timestamp: Date.now() }
+      });
+      
+      toast.success("🪩 Disco mode activated! Let's party!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] Disco error:", error);
+      toast.error("Failed to activate disco mode");
+    }
+  };
+
+  const handleFlipScreen = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'flipScreen', timestamp: Date.now() }
+      });
+      
+      toast.success("🔄 Screen flipped for all users!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] Flip error:", error);
+      toast.error("Failed to flip screens");
+    }
+  };
+
+  const handleRickRoll = async () => {
+    try {
+      const trollChannel = supabase.channel('troll-zone-global', {
+        config: { broadcast: { self: true } }
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        trollChannel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(new Error(`Subscription failed: ${status}`));
+          }
+        });
+      });
+      
+      await trollChannel.send({
+        type: 'broadcast',
+        event: 'troll-action',
+        payload: { action: 'rickRoll', timestamp: Date.now() }
+      });
+      
+      toast.success("🎵 Never gonna give you up! Rick rolled all users!");
+      await supabase.removeChannel(trollChannel);
+    } catch (error) {
+      console.error("[Troll Admin] Rick roll error:", error);
+      toast.error("Failed to rick roll");
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!userId) {
       toast.error("User ID not found");
@@ -1506,6 +1625,66 @@ export default function AdminPanel() {
                       Start Emoji Rain
                     </Button>
                   </div>
+
+                  {/* Glitch Effect */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-purple-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>📺</span>
+                      Glitch Matrix
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Trigger a glitchy matrix effect across all screens</p>
+                    <Button
+                      onClick={handleGlitchEffect}
+                      className="w-full bg-purple-600 hover:bg-purple-700"
+                    >
+                      Activate Glitch
+                    </Button>
+                  </div>
+
+                  {/* Disco Mode */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-cyan-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>🪩</span>
+                      Disco Mode
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Flash random background colors like a disco party</p>
+                    <Button
+                      onClick={handleDiscoMode}
+                      className="w-full bg-cyan-600 hover:bg-cyan-700"
+                    >
+                      Start Party! 🎊
+                    </Button>
+                  </div>
+
+                  {/* Flip Screen */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-green-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>🔄</span>
+                      Flip Screen
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Turn everyone's screen upside down for 5 seconds</p>
+                    <Button
+                      onClick={handleFlipScreen}
+                      className="w-full bg-green-600 hover:bg-green-700"
+                    >
+                      Flip It!
+                    </Button>
+                  </div>
+
+                  {/* Rick Roll */}
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-orange-500 transition-colors">
+                    <h3 className="text-lg font-semibold mb-2 text-white flex items-center gap-2">
+                      <span>🎵</span>
+                      Never Gonna Give You Up
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4">Classic rickroll - show lyrics to all users</p>
+                    <Button
+                      onClick={handleRickRoll}
+                      className="w-full bg-orange-600 hover:bg-orange-700"
+                    >
+                      Rick Roll 'Em
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4 mt-6">
@@ -1701,6 +1880,18 @@ export default function AdminPanel() {
                         onChange={(e) => setAnnouncementDescription(e.target.value)}
                         placeholder="Enter announcement description..."
                         className="mt-2 bg-gray-800 border-gray-700 text-white min-h-[100px]"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="announcementButtonText" className="text-white">Button Text</Label>
+                      <Input
+                        id="announcementButtonText"
+                        type="text"
+                        value={announcementButtonText}
+                        onChange={(e) => setAnnouncementButtonText(e.target.value)}
+                        placeholder="e.g., Got it!, Okay, Understood, etc."
+                        className="mt-2 bg-gray-800 border-gray-700 text-white"
                       />
                     </div>
 

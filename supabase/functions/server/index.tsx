@@ -2537,12 +2537,13 @@ app.post(`/${SERVER_ID}/admin/announcement`, async (c) => {
     }
 
     const body = await c.req.json();
-    const { title, description, enabled } = body;
+    const { title, description, buttonText, enabled } = body;
 
     const announcement = {
       id: crypto.randomUUID(),
       title,
       description,
+      buttonText: buttonText || 'Got it!',
       enabled: enabled !== undefined ? enabled : true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()

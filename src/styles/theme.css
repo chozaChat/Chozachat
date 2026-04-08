@@ -199,6 +199,20 @@
     }
   }
 
+  @keyframes glitch {
+    0% { transform: translate(0); filter: hue-rotate(0deg); }
+    20% { transform: translate(-5px, 5px); filter: hue-rotate(90deg); }
+    40% { transform: translate(-5px, -5px); filter: hue-rotate(180deg); }
+    60% { transform: translate(5px, 5px); filter: hue-rotate(270deg); }
+    80% { transform: translate(5px, -5px); filter: hue-rotate(360deg); }
+    100% { transform: translate(0); filter: hue-rotate(0deg); }
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-20px) scale(1.1); }
+  }
+
   @keyframes bounce-subtle {
     0%, 100% {
       transform: translateY(0);
