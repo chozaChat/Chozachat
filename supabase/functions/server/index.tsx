@@ -5,9 +5,9 @@ import * as kv from './kv_store.tsx';
 
 const app = new Hono();
 
-// VERSION: 2024-04-08-v32-POLL-BACKEND
+// VERSION: 2024-04-08-v33-POLL-MANAGEMENT
 
-console.log('🚀🚀🚀 SERVER STARTING - VERSION: v32-POLL-BACKEND 🚀🚀🚀');
+console.log('🚀🚀🚀 SERVER STARTING - VERSION: v33-POLL-MANAGEMENT 🚀🚀🚀');
 console.log('🚀🚀🚀 TIMESTAMP:', Date.now(), '🚀🚀🚀');
 console.log('🚀🚀🚀 DEPLOYED AT:', new Date().toISOString(), '🚀🚀🚀');
 
@@ -91,12 +91,12 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 
 // Health check endpoint
 app.get("/make-server-a1c86d03/health", (c) => {
-  return c.json({ status: "ok", version: "2024-04-08-v32-POLL-BACKEND", timestamp: new Date().toISOString() });
+  return c.json({ status: "ok", version: "2024-04-08-v33-POLL-MANAGEMENT", timestamp: new Date().toISOString() });
 });
 
 // Version check endpoint
 app.get("/make-server-a1c86d03/version", (c) => {
-  return c.json({ version: "2024-04-08-v32-POLL-BACKEND", timestamp: Date.now() });
+  return c.json({ version: "2024-04-08-v33-POLL-MANAGEMENT", timestamp: Date.now() });
 });
 
 const SERVER_ID = 'make-server-a1c86d03';
@@ -1637,8 +1637,18 @@ app.post(`/${SERVER_ID}/messages`, async (c) => {
     if (poll) {
       message.poll = {
         ...poll,
-        votes: poll.votes || [] // Initialize votes array if not present
+        votes: poll.votes || [], // Initialize votes array if not present
+        stopped: false, // Initialize as not stopped
+        createdAt: new Date().toISOString()
       };
+      
+      // Calculate expiresAt if duration is provided
+      if (poll.duration && typeof poll.duration === 'number' && poll.duration > 0) {
+        const expiresAt = new Date(Date.now() + poll.duration * 60000).toISOString();
+        message.poll.expiresAt = expiresAt;
+        console.log('📊 [SEND MESSAGE] Poll will expire at:', expiresAt);
+      }
+      
       console.log('📊 [SEND MESSAGE] ✅ Saving message WITH poll:', JSON.stringify(message.poll));
     }
 
@@ -1935,6 +1945,194 @@ app.delete(`/${SERVER_ID}/polls/:pollId/vote`, async (c) => {
   } catch (error: any) {
     console.error('Poll retract error:', error);
     return c.json({ error: 'Failed to retract vote' }, 500);
+  }
+});
+
+// Stop voting on a poll
+app.post(`/${SERVER_ID}/polls/:pollId/stop`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    console.log('🛑 [POLL STOP] User:', userId, 'stopping poll:', pollId);
+    console.log('🛑 [POLL STOP] ChatId:', chatId, 'ChatType:', chatType);
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === pollId);
+    
+    if (msgIndex === -1) {
+      console.error('🛑 [POLL STOP] Poll message not found:', pollId);
+      return c.json({ error: 'Poll not found' }, 404);
+    }
+
+    const message = messages[msgIndex];
+    
+    if (!message.poll) {
+      return c.json({ error: 'Message is not a poll' }, 400);
+    }
+
+    // Check if user is the poll creator
+    if (message.senderId !== userId) {
+      return c.json({ error: 'Only poll creator can stop voting' }, 403);
+    }
+
+    // Stop the poll
+    message.poll.stopped = true;
+    messages[msgIndex] = message;
+    
+    await kv.set(messageKey, messages);
+
+    console.log('🛑 [POLL STOP] ✅ Voting stopped successfully');
+
+    return c.json({ success: true, poll: message.poll });
+  } catch (error: any) {
+    console.error('Poll stop error:', error);
+    return c.json({ error: 'Failed to stop voting' }, 500);
+  }
+});
+
+// Delete a poll
+app.delete(`/${SERVER_ID}/polls/:pollId`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    console.log('🗑️ [POLL DELETE] User:', userId, 'deleting poll:', pollId);
+    console.log('🗑️ [POLL DELETE] ChatId:', chatId, 'ChatType:', chatType);
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === pollId);
+    
+    if (msgIndex === -1) {
+      console.error('🗑️ [POLL DELETE] Poll message not found:', pollId);
+      return c.json({ error: 'Poll not found' }, 404);
+    }
+
+    const message = messages[msgIndex];
+    
+    if (!message.poll) {
+      return c.json({ error: 'Message is not a poll' }, 400);
+    }
+
+    // Check if user is the poll creator
+    if (message.senderId !== userId) {
+      return c.json({ error: 'Only poll creator can delete poll' }, 403);
+    }
+
+    // Delete the poll message
+    messages.splice(msgIndex, 1);
+    
+    await kv.set(messageKey, messages);
+
+    console.log('🗑️ [POLL DELETE] ✅ Poll deleted successfully');
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('Poll delete error:', error);
+    return c.json({ error: 'Failed to delete poll' }, 500);
+  }
+});
+
+// Edit a poll (only if no votes)
+app.put(`/${SERVER_ID}/polls/:pollId`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+    
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+    const body = await c.req.json();
+    const { chatId, chatType, pollData } = body;
+
+    console.log('✏️ [POLL EDIT] User:', userId, 'editing poll:', pollId);
+    console.log('✏️ [POLL EDIT] ChatId:', chatId, 'ChatType:', chatType);
+
+    if (!chatId || !chatType || !pollData) {
+      return c.json({ error: 'chatId, chatType, and pollData are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+    
+    const msgIndex = messages.findIndex((m: any) => m.id === pollId);
+    
+    if (msgIndex === -1) {
+      console.error('✏️ [POLL EDIT] Poll message not found:', pollId);
+      return c.json({ error: 'Poll not found' }, 404);
+    }
+
+    const message = messages[msgIndex];
+    
+    if (!message.poll) {
+      return c.json({ error: 'Message is not a poll' }, 400);
+    }
+
+    // Check if user is the poll creator
+    if (message.senderId !== userId) {
+      return c.json({ error: 'Only poll creator can edit poll' }, 403);
+    }
+
+    // Check if anyone has voted
+    const votes = message.poll.votes || [];
+    if (votes.length > 0) {
+      return c.json({ error: 'Cannot edit poll after people have voted' }, 400);
+    }
+
+    // Update poll data while preserving votes and timestamps
+    message.poll = {
+      ...pollData,
+      votes: message.poll.votes,
+      stopped: message.poll.stopped,
+      createdAt: message.poll.createdAt
+    };
+
+    // Recalculate expiresAt if duration changed
+    if (pollData.duration && typeof pollData.duration === 'number' && pollData.duration > 0) {
+      const createdAt = new Date(message.poll.createdAt).getTime();
+      const expiresAt = new Date(createdAt + pollData.duration * 60000).toISOString();
+      message.poll.expiresAt = expiresAt;
+    } else {
+      delete message.poll.expiresAt;
+    }
+
+    messages[msgIndex] = message;
+    
+    await kv.set(messageKey, messages);
+
+    console.log('✏️ [POLL EDIT] ✅ Poll edited successfully');
+
+    return c.json({ success: true, message });
+  } catch (error: any) {
+    console.error('Poll edit error:', error);
+    return c.json({ error: 'Failed to edit poll' }, 500);
   }
 });
 

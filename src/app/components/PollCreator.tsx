@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -19,15 +19,18 @@ export interface PollData {
   victorineMode: boolean;
   hint?: string;
   explanation?: string;
+  duration?: number; // in minutes
+  hideVotersUntilStopped?: boolean;
 }
 
 interface PollCreatorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreatePoll: (poll: PollData) => void;
+  editingPollData?: PollData | null;
 }
 
-export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorProps) {
+export function PollCreator({ open, onOpenChange, onCreatePoll, editingPollData }: PollCreatorProps) {
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState<Array<{ id: string; text: string; isCorrect: boolean }>>([
     { id: '1', text: '', isCorrect: false },
@@ -38,6 +41,41 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
   const [victorineMode, setVictorineMode] = useState(false);
   const [hint, setHint] = useState('');
   const [explanation, setExplanation] = useState('');
+  const [duration, setDuration] = useState<number | undefined>(undefined);
+  const [hideVotersUntilStopped, setHideVotersUntilStopped] = useState(false);
+
+  // Populate form when editing
+  useEffect(() => {
+    if (editingPollData && open) {
+      setQuestion(editingPollData.question);
+      setOptions(editingPollData.options.map(opt => ({
+        id: opt.id,
+        text: opt.text,
+        isCorrect: opt.isCorrect || false
+      })));
+      setAnonymous(editingPollData.anonymous);
+      setMultipleAnswers(editingPollData.multipleAnswers);
+      setVictorineMode(editingPollData.victorineMode);
+      setHint(editingPollData.hint || '');
+      setExplanation(editingPollData.explanation || '');
+      setDuration(editingPollData.duration);
+      setHideVotersUntilStopped(editingPollData.hideVotersUntilStopped || false);
+    } else if (!editingPollData && !open) {
+      // Reset form when closing and not editing
+      setQuestion('');
+      setOptions([
+        { id: '1', text: '', isCorrect: false },
+        { id: '2', text: '', isCorrect: false }
+      ]);
+      setAnonymous(false);
+      setMultipleAnswers(false);
+      setVictorineMode(false);
+      setHint('');
+      setExplanation('');
+      setDuration(undefined);
+      setHideVotersUntilStopped(false);
+    }
+  }, [editingPollData, open]);
 
   const handleAddOption = () => {
     if (options.length < 10) {
@@ -97,7 +135,9 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
       multipleAnswers,
       victorineMode,
       hint: victorineMode && hint.trim() ? hint.trim() : undefined,
-      explanation: victorineMode && explanation.trim() ? explanation.trim() : undefined
+      explanation: victorineMode && explanation.trim() ? explanation.trim() : undefined,
+      duration,
+      hideVotersUntilStopped
     });
 
     // Reset form
@@ -111,6 +151,8 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
     setVictorineMode(false);
     setHint('');
     setExplanation('');
+    setDuration(undefined);
+    setHideVotersUntilStopped(false);
     onOpenChange(false);
   };
 
@@ -123,10 +165,10 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto dark:bg-gray-900 dark:text-white">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            📊 Create Poll
+            {editingPollData ? '✏️ Edit Poll' : '📊 Create Poll'}
           </DialogTitle>
           <DialogDescription>
-            Create a poll with up to 10 options. Configure settings below.
+            {editingPollData ? 'Update your poll settings and options.' : 'Create a poll with up to 10 options. Configure settings below.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -263,6 +305,39 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
                 {victorineMode ? 'Enabled' : 'Disabled'}
               </Button>
             </div>
+
+            {/* Duration Limit */}
+            <div className="p-3 rounded-lg border dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+              <div className="flex-1">
+                <div className="font-medium">⏱️ Limit Duration</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">Auto-stop voting after set time</div>
+              </div>
+              <Input
+                type="number"
+                placeholder="Duration in minutes (optional)"
+                value={duration !== undefined ? duration.toString() : ''}
+                onChange={(e) => setDuration(e.target.value ? parseInt(e.target.value) : undefined)}
+                className="dark:bg-gray-800 dark:border-gray-700"
+                min="1"
+              />
+            </div>
+
+            {/* Hide Voters Until Stopped */}
+            <div className="flex items-center justify-between p-3 rounded-lg border dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+              <div className="flex-1">
+                <div className="font-medium">👻 Hide Voters Until Stopped</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Don't show who voted until voting stops</div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={hideVotersUntilStopped ? "default" : "outline"}
+                onClick={() => setHideVotersUntilStopped(!hideVotersUntilStopped)}
+                className={hideVotersUntilStopped ? 'bg-blue-500 hover:bg-blue-600' : 'dark:border-gray-700'}
+              >
+                {hideVotersUntilStopped ? 'Enabled' : 'Disabled'}
+              </Button>
+            </div>
           </div>
 
           {/* Victorine Mode Additional Fields */}
@@ -328,7 +403,7 @@ export function PollCreator({ open, onOpenChange, onCreatePoll }: PollCreatorPro
             disabled={!canCreate}
             className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
           >
-            Create Poll
+            {editingPollData ? 'Update Poll' : 'Create Poll'}
           </Button>
         </DialogFooter>
       </DialogContent>

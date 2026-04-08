@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff } from 'lucide-react';
+import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff, MoreVertical, Pencil, Trash2, StopCircle, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PollData } from './PollCreator';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 interface PollVote {
   userId: string;
@@ -12,7 +13,11 @@ interface PollVote {
 }
 
 interface PollMessageProps {
-  poll: PollData;
+  poll: PollData & {
+    stopped?: boolean;
+    expiresAt?: string;
+    createdAt?: string;
+  };
   pollId: string;
   votes: PollVote[];
   currentUserId: string;
@@ -21,14 +26,58 @@ interface PollMessageProps {
   isOwnPoll?: boolean;
   totalChatMembers?: number; // Total members in the chat (excluding sender)
   onRefreshPoll?: () => void; // Callback to refresh poll data
+  onEditPoll?: (pollId: string) => void;
+  onDeletePoll?: (pollId: string) => void;
+  onStopVoting?: (pollId: string) => void;
+  senderId?: string;
 }
 
-export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetractVote, isOwnPoll, totalChatMembers, onRefreshPoll }: PollMessageProps) {
+export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetractVote, isOwnPoll, totalChatMembers, onRefreshPoll, onEditPoll, onDeletePoll, onStopVoting, senderId }: PollMessageProps) {
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const [hasVoted, setHasVoted] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [showVoters, setShowVoters] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
+  const [isExpired, setIsExpired] = useState(false);
+
+  // Check if poll is expired
+  useEffect(() => {
+    if (!poll.expiresAt) {
+      setIsExpired(false);
+      setTimeRemaining(null);
+      return;
+    }
+
+    const checkExpiry = () => {
+      const now = new Date().getTime();
+      const expiryTime = new Date(poll.expiresAt!).getTime();
+      const diff = expiryTime - now;
+
+      if (diff <= 0) {
+        setIsExpired(true);
+        setTimeRemaining('Expired');
+        return;
+      }
+
+      setIsExpired(false);
+
+      // Calculate time remaining
+      const minutes = Math.floor(diff / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+
+      if (minutes > 0) {
+        setTimeRemaining(`${minutes}m ${seconds}s`);
+      } else {
+        setTimeRemaining(`${seconds}s`);
+      }
+    };
+
+    checkExpiry();
+    const interval = setInterval(checkExpiry, 1000);
+
+    return () => clearInterval(interval);
+  }, [poll.expiresAt]);
 
   useEffect(() => {
     const userVote = votes.find(v => v.userId === currentUserId);
@@ -99,7 +148,8 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
   }, [onRefreshPoll, totalChatMembers, totalVotes, pollId]);
 
   const handleOptionClick = (optionId: string) => {
-    if (hasVoted) return;
+    // Don't allow voting if poll is stopped or expired
+    if (hasVoted || poll.stopped || isExpired) return;
 
     if (poll.multipleAnswers) {
       if (selectedOptions.includes(optionId)) {
@@ -114,10 +164,17 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
 
   const handleVote = () => {
     if (selectedOptions.length === 0) return;
+    // Don't allow voting if poll is stopped or expired
+    if (poll.stopped || isExpired) return;
     onVote(pollId, selectedOptions);
     setHasVoted(true);
     setShowResults(true);
   };
+
+  // Determine if we should show voter names
+  const shouldShowVoterNames = poll.hideVotersUntilStopped 
+    ? (poll.stopped || isExpired) 
+    : true;
 
   return (
     <div className="space-y-3 p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800">
@@ -139,6 +196,22 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
             {poll.victorineMode && (
               <Badge variant="outline" className="text-xs bg-purple-100 dark:bg-purple-900">
                 🎓 Quiz Mode
+              </Badge>
+            )}
+            {poll.stopped && (
+              <Badge variant="outline" className="text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
+                🛑 Voting Stopped
+              </Badge>
+            )}
+            {isExpired && (
+              <Badge variant="outline" className="text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300">
+                ⏱️ Expired
+              </Badge>
+            )}
+            {poll.expiresAt && !isExpired && timeRemaining && (
+              <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900">
+                <Clock className="size-3 mr-1" />
+                {timeRemaining}
               </Badge>
             )}
           </div>
@@ -262,7 +335,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 </div>
 
                 {/* Voter names (non-anonymous) */}
-                {showResults && !poll.anonymous && showVoters && voterNames.length > 0 && (
+                {showResults && !poll.anonymous && showVoters && shouldShowVoterNames && voterNames.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-gray-300 dark:border-gray-600 text-xs text-gray-600 dark:text-gray-400">
                     👥 {voterNames.join(', ')}
                   </div>
@@ -288,14 +361,22 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
       {/* Actions */}
       <div className="flex items-center justify-between gap-2 pt-2">
         {!hasVoted ? (
-          <Button
-            type="button"
-            onClick={handleVote}
-            disabled={selectedOptions.length === 0}
-            className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
-          >
-            Vote {selectedOptions.length > 0 && `(${selectedOptions.length})`}
-          </Button>
+          <>
+            {(poll.stopped || isExpired) ? (
+              <div className="flex-1 p-3 text-center bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-600 dark:text-gray-400">
+                {poll.stopped ? '🛑 Voting has been stopped' : '⏱️ Poll has expired'}
+              </div>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleVote}
+                disabled={selectedOptions.length === 0}
+                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+              >
+                Vote {selectedOptions.length > 0 && `(${selectedOptions.length})`}
+              </Button>
+            )}
+          </>
         ) : (
           <div className="flex gap-2 flex-1">
             <Button
@@ -317,7 +398,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 </>
               )}
             </Button>
-            {!poll.anonymous && totalVotes > 0 && (
+            {!poll.anonymous && totalVotes > 0 && shouldShowVoterNames && (
               <Button
                 type="button"
                 size="sm"
@@ -328,7 +409,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 {showVoters ? '👤 Hide' : '👥 Show'} Voters
               </Button>
             )}
-            {onRetractVote && !poll.victorineMode && (
+            {onRetractVote && !poll.victorineMode && !poll.stopped && !isExpired && (
               <Button
                 type="button"
                 size="sm"
@@ -342,6 +423,61 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
           </div>
         )}
       </div>
+
+      {/* Poll Actions */}
+      {isOwnPoll && (
+        <div className="mt-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="dark:border-gray-700"
+              >
+                <MoreVertical className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56" align="end">
+              {!poll.stopped && !isExpired && onStopVoting && (
+                <DropdownMenuItem
+                  onClick={() => onStopVoting(pollId)}
+                  className="text-red-500 dark:text-red-300"
+                >
+                  <StopCircle className="size-4 mr-2" />
+                  Stop Voting
+                </DropdownMenuItem>
+              )}
+              {poll.expiresAt && timeRemaining && (
+                <DropdownMenuItem
+                  disabled
+                  className="text-gray-500 dark:text-gray-300"
+                >
+                  <Clock className="size-4 mr-2" />
+                  {isExpired ? 'Expired' : `Expires in ${timeRemaining}`}
+                </DropdownMenuItem>
+              )}
+              {onEditPoll && (
+                <DropdownMenuItem
+                  onClick={() => onEditPoll(pollId)}
+                >
+                  <Pencil className="size-4 mr-2" />
+                  Edit Poll
+                </DropdownMenuItem>
+              )}
+              {onDeletePoll && (
+                <DropdownMenuItem
+                  onClick={() => onDeletePoll(pollId)}
+                  className="text-red-500 dark:text-red-300"
+                >
+                  <Trash2 className="size-4 mr-2" />
+                  Delete Poll
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
     </div>
   );
 }

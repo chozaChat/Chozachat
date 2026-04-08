@@ -140,6 +140,9 @@ interface Message {
       optionIds: string[];
       userName: string;
     }>;
+    stopped?: boolean;
+    expiresAt?: string;
+    createdAt?: string;
   };
 }
 
@@ -164,6 +167,8 @@ export default function ChatMain() {
   const [selectedChat, setSelectedChat] = useState<{ type: 'friend' | 'group' | 'news' | 'channel', id: string, name: string, friendData?: Friend, admins?: string[], verified?: boolean } | null>(null);
   const [messageText, setMessageText] = useState("");
   const [pollCreatorOpen, setPollCreatorOpen] = useState(false);
+  const [editingPollId, setEditingPollId] = useState<string | null>(null);
+  const [editingPollData, setEditingPollData] = useState<PollData | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<(User | Channel)[]>([]);
   const [groupName, setGroupName] = useState("");
@@ -286,7 +291,7 @@ export default function ChatMain() {
   const SERVER_ID = 'make-server-a1c86d03';
   
   // FRONTEND VERSION FOR DEBUGGING
-  const FRONTEND_VERSION = '2024-04-08-v32-POLL-BACKEND';
+  const FRONTEND_VERSION = '2024-04-08-v33-POLL-MANAGEMENT';
   
   // Helper function to check if a message is just a sticker (emoji only, no other text)
   const isOnlySticker = (text: string) => {
@@ -490,15 +495,15 @@ export default function ChatMain() {
         console.log("=== SERVER VERSION CHECK ===");
         console.log("Server version:", data.version);
         console.log("Server timestamp:", data.timestamp);
-        console.log("Expected version: 2024-04-08-v32-POLL-BACKEND");
+        console.log("Expected version: 2024-04-08-v33-POLL-MANAGEMENT");
         
         if (!data.version) {
           console.warn("⚠️ WARNING: Server did not return version info. Server may not be deployed.");
           console.warn("Response data:", data);
-        } else if (data.version !== "2024-04-08-v32-POLL-BACKEND") {
+        } else if (data.version !== "2024-04-08-v33-POLL-MANAGEMENT") {
           console.warn("⚠️ WARNING: Server version mismatch! Old code might be running.");
           console.warn("⚠️ Current version:", data.version);
-          toast.error(`Server version mismatch! Expected 2024-04-08-v32-POLL-BACKEND, got ${data.version}`, { duration: 10000 });
+          toast.error(`Server version mismatch! Expected 2024-04-08-v33-POLL-MANAGEMENT, got ${data.version}`, { duration: 10000 });
         } else {
           console.log("✓ Server version is correct!");
           // Success toast removed - only show errors
@@ -2119,61 +2124,107 @@ export default function ChatMain() {
     if (!selectedChat || !userId) return;
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${publicAnonKey}`,
-            'X-User-Id': userId,
-          },
-          body: JSON.stringify({
-            chatId: selectedChat.id,
-            content: `📊 Poll: ${pollData.question}`,
-            chatType: selectedChat.type,
-            poll: pollData
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        toast.error(errorData.error || "Failed to create poll");
-        return;
-      }
-
-      const data = await response.json();
-      
-      console.log('📊 Poll created, server response:', data);
-      console.log('📊 Message object from server:', data.message);
-      console.log('📊 Poll data in message:', data.message?.poll);
-      
-      // Server now returns poll data, but ensure votes array exists
-      if (data.message.poll && !data.message.poll.votes) {
-        data.message.poll.votes = [];
-      }
-      
-      // Add poll message to messages
-      setMessages(prev => [...prev, data.message]);
-      
-      // Broadcast new message via Realtime
-      if (messageChannelRef.current) {
-        await messageChannelRef.current.send({
-          type: 'broadcast',
-          event: 'new-message',
-          payload: { 
-            chatType: selectedChat.type, 
-            chatId: selectedChat.id,
-            message: data.message
+      // Check if we're editing an existing poll
+      if (editingPollId) {
+        // Edit existing poll
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/polls/${editingPollId}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+              'X-User-Id': userId,
+            },
+            body: JSON.stringify({
+              chatId: selectedChat.id,
+              chatType: selectedChat.type,
+              pollData
+            }),
           }
-        });
-      }
+        );
 
-      toast.success("Poll created!");
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          toast.error(errorData.error || "Failed to edit poll");
+          return;
+        }
+
+        const data = await response.json();
+        
+        // Update poll in local state
+        setMessages(prev => prev.map(msg => 
+          msg.id === editingPollId ? data.message : msg
+        ));
+
+        // Reload messages to ensure sync
+        if (selectedChat) {
+          loadMessages(selectedChat.type, selectedChat.id);
+        }
+
+        toast.success("Poll updated!");
+        
+        // Clear editing state
+        setEditingPollId(null);
+        setEditingPollData(null);
+      } else {
+        // Create new poll
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${publicAnonKey}`,
+              'X-User-Id': userId,
+            },
+            body: JSON.stringify({
+              chatId: selectedChat.id,
+              content: `📊 Poll: ${pollData.question}`,
+              chatType: selectedChat.type,
+              poll: pollData
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          toast.error(errorData.error || "Failed to create poll");
+          return;
+        }
+
+        const data = await response.json();
+        
+        console.log('📊 Poll created, server response:', data);
+        console.log('📊 Message object from server:', data.message);
+        console.log('📊 Poll data in message:', data.message?.poll);
+        
+        // Server now returns poll data, but ensure votes array exists
+        if (data.message.poll && !data.message.poll.votes) {
+          data.message.poll.votes = [];
+        }
+        
+        // Add poll message to messages
+        setMessages(prev => [...prev, data.message]);
+        
+        // Broadcast new message via Realtime
+        if (messageChannelRef.current) {
+          await messageChannelRef.current.send({
+            type: 'broadcast',
+            event: 'new-message',
+            payload: { 
+              chatType: selectedChat.type, 
+              chatId: selectedChat.id,
+              message: data.message
+            }
+          });
+        }
+
+        toast.success("Poll created!");
+      }
     } catch (error) {
-      console.error("Create poll error:", error);
-      toast.error("Failed to create poll");
+      console.error("Create/Edit poll error:", error);
+      toast.error(editingPollId ? "Failed to edit poll" : "Failed to create poll");
     }
   };
 
@@ -2295,6 +2346,126 @@ export default function ChatMain() {
     } catch (error) {
       console.error("Retract vote error:", error);
       toast.error("Failed to retract vote");
+    }
+  };
+
+  const handleEditPoll = async (pollId: string) => {
+    if (!userId || !selectedChat) return;
+
+    // Find the poll message
+    const pollMessage = messages.find(m => m.id === pollId);
+    if (!pollMessage || !pollMessage.poll) {
+      toast.error("Poll not found");
+      return;
+    }
+
+    // Check if anyone has voted
+    const hasVotes = (pollMessage.poll.votes || []).length > 0;
+    if (hasVotes) {
+      toast.error("Cannot edit poll after people have voted");
+      return;
+    }
+
+    // Set editing state and open poll creator with existing data
+    setEditingPollId(pollId);
+    setEditingPollData(pollMessage.poll);
+    setPollCreatorOpen(true);
+  };
+
+  const handleDeletePoll = async (pollId: string) => {
+    if (!userId || !selectedChat) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/polls/${pollId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+          body: JSON.stringify({
+            chatId: selectedChat.id,
+            chatType: selectedChat.type
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        toast.error(errorData.error || "Failed to delete poll");
+        return;
+      }
+
+      // Remove poll from local state
+      setMessages(prev => prev.filter(m => m.id !== pollId));
+
+      // Broadcast deletion via Realtime
+      if (messageChannelRef.current) {
+        await messageChannelRef.current.send({
+          type: 'broadcast',
+          event: 'message-deleted',
+          payload: { messageId: pollId, chatType: selectedChat.type, chatId: selectedChat.id }
+        });
+      }
+
+      toast.success("Poll deleted!");
+    } catch (error) {
+      console.error("Delete poll error:", error);
+      toast.error("Failed to delete poll");
+    }
+  };
+
+  const handleStopVoting = async (pollId: string) => {
+    if (!userId || !selectedChat) return;
+
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/polls/${pollId}/stop`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+          body: JSON.stringify({
+            chatId: selectedChat.id,
+            chatType: selectedChat.type
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        toast.error(errorData.error || "Failed to stop voting");
+        return;
+      }
+
+      // Update poll in local state
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === pollId && msg.poll) {
+          return {
+            ...msg,
+            poll: {
+              ...msg.poll,
+              stopped: true
+            }
+          };
+        }
+        return msg;
+      }));
+
+      // Reload messages to ensure everyone sees the updated state
+      if (selectedChat) {
+        loadMessages(selectedChat.type, selectedChat.id);
+      }
+
+      toast.success("Voting stopped!");
+    } catch (error) {
+      console.error("Stop voting error:", error);
+      toast.error("Failed to stop voting");
     }
   };
 
@@ -4025,6 +4196,10 @@ export default function ChatMain() {
                                   loadMessages(selectedChat.type, selectedChat.id);
                                 }
                               }}
+                              onEditPoll={handleEditPoll}
+                              onDeletePoll={handleDeletePoll}
+                              onStopVoting={handleStopVoting}
+                              senderId={message.senderId}
                             />
                           </div>
                         ) : looksLikePoll ? (
@@ -5724,8 +5899,16 @@ export default function ChatMain() {
       {/* Poll Creator */}
       <PollCreator
         open={pollCreatorOpen}
-        onOpenChange={setPollCreatorOpen}
+        onOpenChange={(open) => {
+          setPollCreatorOpen(open);
+          if (!open) {
+            // Clear editing state when closing
+            setEditingPollId(null);
+            setEditingPollData(null);
+          }
+        }}
         onCreatePoll={handleCreatePoll}
+        editingPollData={editingPollData}
       />
 
       {/* Announcement Banner */}
