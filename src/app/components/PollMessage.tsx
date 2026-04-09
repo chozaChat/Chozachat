@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff, MoreVertical, Pencil, Trash2, StopCircle, Clock, X } from 'lucide-react';
+import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff, MoreVertical, Pencil, Trash2, StopCircle, Clock, X, Undo2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PollData } from './PollCreator';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -418,10 +418,10 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 size="sm"
                 variant="outline"
                 onClick={() => onRetractVote(pollId)}
-                className="dark:border-gray-700 text-xs md:text-sm px-2 md:px-3"
+                className="bg-orange-50 dark:bg-orange-900/20 border-orange-300 dark:border-orange-700 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs md:text-sm px-2 md:px-3"
               >
-                <X className="size-3 md:size-4 md:mr-1" />
-                <span className="hidden md:inline">Retract</span>
+                <Undo2 className="size-3 md:size-4 md:mr-1" />
+                <span className="hidden md:inline">Retract Vote</span>
               </Button>
             )}
           </div>
