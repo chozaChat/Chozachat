@@ -363,7 +363,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
         {!hasVoted ? (
           <>
             {(poll.stopped || isExpired) ? (
-              <div className="flex-1 p-3 text-center bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-600 dark:text-gray-400">
+              <div className="flex-1 p-2 md:p-3 text-center bg-gray-100 dark:bg-gray-800 rounded-lg text-sm text-gray-600 dark:text-gray-400">
                 {poll.stopped ? '🛑 Voting has been stopped' : '⏱️ Poll has expired'}
               </div>
             ) : (
@@ -371,30 +371,32 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 type="button"
                 onClick={handleVote}
                 disabled={selectedOptions.length === 0}
-                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-sm md:text-base"
               >
                 Vote {selectedOptions.length > 0 && `(${selectedOptions.length})`}
               </Button>
             )}
           </>
         ) : (
-          <div className="flex gap-2 flex-1">
+          <div className="flex flex-wrap gap-2 flex-1">
             <Button
               type="button"
               size="sm"
               variant="outline"
               onClick={() => setShowResults(!showResults)}
-              className="flex-1 dark:border-gray-700"
+              className="flex-1 dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
             >
               {showResults ? (
                 <>
-                  <EyeOff className="size-4 mr-1" />
-                  Hide Results
+                  <EyeOff className="size-3 md:size-4 mr-1" />
+                  <span className="hidden sm:inline">Hide Results</span>
+                  <span className="sm:hidden">Hide</span>
                 </>
               ) : (
                 <>
-                  <Eye className="size-4 mr-1" />
-                  Show Results
+                  <Eye className="size-3 md:size-4 mr-1" />
+                  <span className="hidden sm:inline">Show Results</span>
+                  <span className="sm:hidden">Show</span>
                 </>
               )}
             </Button>
@@ -404,10 +406,10 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 size="sm"
                 variant="outline"
                 onClick={() => setShowVoters(!showVoters)}
-                className="dark:border-gray-700"
+                className="dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
                 disabled={!shouldShowVoterNames}
               >
-                {showVoters ? '👤 Hide' : '👥 Show'} Voters
+                {showVoters ? '👤' : '👥'} <span className="hidden sm:inline">{showVoters ? 'Hide' : 'Show'} Voters</span>
                 {!shouldShowVoterNames && ' 🔒'}
               </Button>
             )}
@@ -417,9 +419,10 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 size="sm"
                 variant="outline"
                 onClick={() => onRetractVote(pollId)}
-                className="dark:border-gray-700"
+                className="dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
               >
-                Retract Vote
+                <span className="hidden sm:inline">Retract Vote</span>
+                <span className="sm:hidden">Retract</span>
               </Button>
             )}
           </div>

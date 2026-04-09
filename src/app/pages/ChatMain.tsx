@@ -4467,7 +4467,7 @@ export default function ChatMain() {
 
             {/* Messages */}
             <ScrollArea className="flex-1 overflow-hidden">
-              <div className="p-4 md:p-6 space-y-4">
+              <div className="p-2 sm:p-4 md:p-6 space-y-4">
                 <AnimatePresence initial={false}>
                   {messages.map((message, index) => {
                     const isOwn = message.senderId === userId;
@@ -4505,7 +4505,7 @@ export default function ChatMain() {
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
                         {message.poll ? (
-                          <div className="max-w-full md:max-w-2xl w-full overflow-x-auto">
+                          <div className="max-w-full md:max-w-2xl w-full overflow-x-auto px-2 md:px-0">
                             <PollMessage
                               poll={message.poll}
                               pollId={message.id}
@@ -4605,7 +4605,7 @@ export default function ChatMain() {
                   setEditMessageText={setEditMessageText}
                   onSubmit={handleSendMessage}
                   onEdit={handleEditMessage}
-                  onStickerClick={() => {/* Emoji picker logic */}}
+                  onStickerClick={() => setStickerPickerOpen(true)}
                   onAttachClick={() => setPollCreatorOpen(true)}
                   getSenderName={getSenderName}
                   messageInputRef={messageInputRef}

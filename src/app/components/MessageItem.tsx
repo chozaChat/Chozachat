@@ -106,7 +106,7 @@ export function MessageItem({
         </motion.div>
       ) : (
         // Regular message with bubble
-        <div className={`max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'} relative group`}>
+        <div className={`max-w-[90%] sm:max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'} relative group`}>
           {!isOwn && (chatType === 'group' || chatType === 'news' || chatType === 'ai') && (
             <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
               {isAI ? (
