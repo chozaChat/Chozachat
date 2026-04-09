@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff, MoreVertical, Pencil, Trash2, StopCircle, Clock } from 'lucide-react';
+import { CheckCircle2, Circle, HelpCircle, Eye, EyeOff, MoreVertical, Pencil, Trash2, StopCircle, Clock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PollData } from './PollCreator';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -177,7 +177,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
     : true;
 
   return (
-    <div className="space-y-3 p-3 md:p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 min-w-0">
+    <div className="space-y-3 p-3 md:p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 min-w-0 overflow-hidden">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
@@ -384,19 +384,17 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
               size="sm"
               variant="outline"
               onClick={() => setShowResults(!showResults)}
-              className="flex-1 dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
+              className="flex-1 min-w-0 dark:border-gray-700 text-xs md:text-sm"
             >
               {showResults ? (
                 <>
-                  <EyeOff className="size-3 md:size-4 mr-1" />
-                  <span className="hidden sm:inline">Hide Results</span>
-                  <span className="sm:hidden">Hide</span>
+                  <EyeOff className="size-3 md:size-4 md:mr-1" />
+                  <span className="hidden md:inline">Hide Results</span>
                 </>
               ) : (
                 <>
-                  <Eye className="size-3 md:size-4 mr-1" />
-                  <span className="hidden sm:inline">Show Results</span>
-                  <span className="sm:hidden">Show</span>
+                  <Eye className="size-3 md:size-4 md:mr-1" />
+                  <span className="hidden md:inline">Show Results</span>
                 </>
               )}
             </Button>
@@ -406,11 +404,12 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 size="sm"
                 variant="outline"
                 onClick={() => setShowVoters(!showVoters)}
-                className="dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
+                className="dark:border-gray-700 text-xs md:text-sm px-2 md:px-3"
                 disabled={!shouldShowVoterNames}
               >
-                {showVoters ? '👤' : '👥'} <span className="hidden sm:inline">{showVoters ? 'Hide' : 'Show'} Voters</span>
-                {!shouldShowVoterNames && ' 🔒'}
+                {showVoters ? '👤' : '👥'}
+                <span className="hidden md:inline ml-1">{showVoters ? 'Hide' : 'Show'} Voters</span>
+                {!shouldShowVoterNames && <span className="ml-1">🔒</span>}
               </Button>
             )}
             {onRetractVote && !poll.victorineMode && !poll.stopped && !isExpired && (
@@ -419,10 +418,10 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                 size="sm"
                 variant="outline"
                 onClick={() => onRetractVote(pollId)}
-                className="dark:border-gray-700 text-xs md:text-sm whitespace-nowrap"
+                className="dark:border-gray-700 text-xs md:text-sm px-2 md:px-3"
               >
-                <span className="hidden sm:inline">Retract Vote</span>
-                <span className="sm:hidden">Retract</span>
+                <X className="size-3 md:size-4 md:mr-1" />
+                <span className="hidden md:inline">Retract</span>
               </Button>
             )}
           </div>

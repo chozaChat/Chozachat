@@ -4505,7 +4505,7 @@ export default function ChatMain() {
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
                         {message.poll ? (
-                          <div className="max-w-full md:max-w-2xl w-full overflow-x-auto px-2 md:px-0">
+                          <div className="max-w-full md:max-w-2xl w-full">
                             <PollMessage
                               poll={message.poll}
                               pollId={message.id}
