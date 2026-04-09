@@ -177,11 +177,11 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
     : true;
 
   return (
-    <div className="space-y-3 p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800">
+    <div className="space-y-3 p-3 md:p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 min-w-0">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <div className="font-semibold text-lg dark:text-white">{poll.question}</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-base md:text-lg dark:text-white break-words">{poll.question}</div>
           <div className="flex flex-wrap gap-2 mt-2">
             {poll.anonymous && (
               <Badge key="anonymous" variant="outline" className="text-xs bg-gray-100 dark:bg-gray-800">
@@ -216,7 +216,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
             )}
           </div>
         </div>
-        <div className="text-sm text-gray-600 dark:text-gray-400">
+        <div className="text-xs md:text-sm text-gray-600 dark:text-gray-400 flex-shrink-0">
           {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}
         </div>
       </div>
@@ -321,7 +321,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
                         {isSelected && <div className="size-2.5 rounded-full bg-white" />}
                       </div>
                     )}
-                    <span className="flex-1 dark:text-white truncate">{option.text}</span>
+                    <span className="flex-1 dark:text-white break-words">{option.text}</span>
                     {poll.victorineMode && showResults && isCorrect && (
                       <CheckCircle2 className="size-5 text-green-600 dark:text-green-400 flex-shrink-0" />
                     )}
@@ -336,7 +336,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
 
                 {/* Voter names (non-anonymous) */}
                 {showResults && !poll.anonymous && showVoters && shouldShowVoterNames && voterNames.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-gray-300 dark:border-gray-600 text-xs text-gray-600 dark:text-gray-400">
+                  <div className="mt-2 pt-2 border-t border-gray-300 dark:border-gray-600 text-xs font-medium text-gray-700 dark:text-gray-200">
                     👥 {voterNames.join(', ')}
                   </div>
                 )}

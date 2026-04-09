@@ -577,7 +577,8 @@ export default function ChatMain() {
                 // Check if message already exists
                 const exists = prev.some(m => m.id === messageData.message.id);
                 if (!exists) {
-                  return [...prev, messageData.message];
+                  const enrichedNewMessages = enrichPollVotesWithUserNames([messageData.message]);
+                  return [...prev, enrichedNewMessages[0]];
                 }
                 return prev;
               });
@@ -897,14 +898,15 @@ export default function ChatMain() {
             zaWarudoText.style.top = '50%';
             zaWarudoText.style.left = '50%';
             zaWarudoText.style.transform = 'translate(-50%, -50%) scale(0)';
-            zaWarudoText.style.fontSize = '120px';
+            zaWarudoText.style.fontSize = window.innerWidth < 768 ? '48px' : '120px';
             zaWarudoText.style.fontWeight = 'bold';
             zaWarudoText.style.color = '#FFD700';
             zaWarudoText.style.fontFamily = 'serif';
             zaWarudoText.style.zIndex = '100001';
-            zaWarudoText.style.textShadow = '6px 6px 12px rgba(0,0,0,1), 0 0 30px #FFD700';
+            zaWarudoText.style.textShadow = window.innerWidth < 768 ? '3px 3px 6px rgba(0,0,0,1), 0 0 15px #FFD700' : '6px 6px 12px rgba(0,0,0,1), 0 0 30px #FFD700';
             zaWarudoText.style.transition = 'transform 0.3s ease-out';
-            zaWarudoText.style.webkitTextStroke = '3px #000000';
+            zaWarudoText.style.webkitTextStroke = window.innerWidth < 768 ? '2px #000000' : '3px #000000';
+            zaWarudoText.style.whiteSpace = 'nowrap';
             zaWarudoText.textContent = 'ZA WARUDO!';
             document.body.appendChild(zaWarudoText);
 
@@ -965,9 +967,9 @@ export default function ChatMain() {
             // Create "To Be Continued" arrow
             const jojoArrow = document.createElement('div');
             jojoArrow.style.position = 'fixed';
-            jojoArrow.style.bottom = '100px';
-            jojoArrow.style.right = '-500px';
-            jojoArrow.style.fontSize = '60px';
+            jojoArrow.style.bottom = window.innerWidth < 768 ? '50px' : '100px';
+            jojoArrow.style.right = window.innerWidth < 768 ? '-400px' : '-500px';
+            jojoArrow.style.fontSize = window.innerWidth < 768 ? '28px' : '60px';
             jojoArrow.style.fontWeight = 'bold';
             jojoArrow.style.color = '#ffffff';
             jojoArrow.style.fontFamily = 'serif';
@@ -975,12 +977,15 @@ export default function ChatMain() {
             jojoArrow.style.textShadow = '4px 4px 8px rgba(0,0,0,0.8)';
             jojoArrow.style.transform = 'rotate(-5deg)';
             jojoArrow.style.transition = 'right 1.5s ease-out';
-            jojoArrow.innerHTML = '<span style="font-size: 80px;">⬅</span> To Be Continued';
+            jojoArrow.style.whiteSpace = 'nowrap';
+            jojoArrow.innerHTML = window.innerWidth < 768 
+              ? '<span style="font-size: 36px;">⬅</span> To Be Continued'
+              : '<span style="font-size: 80px;">⬅</span> To Be Continued';
             document.body.appendChild(jojoArrow);
 
             // Slide in the arrow
             setTimeout(() => {
-              jojoArrow.style.right = '50px';
+              jojoArrow.style.right = window.innerWidth < 768 ? '20px' : '50px';
             }, 100);
 
             // Add menacing symbols (ゴゴゴゴ)
@@ -1090,6 +1095,13 @@ export default function ChatMain() {
 
     checkAnnouncement();
   }, [userId]);
+
+  // Enrich poll votes with user names when users/friends data is loaded
+  useEffect(() => {
+    if (allUsers.length > 0 || friends.length > 0) {
+      setMessages(prev => enrichPollVotesWithUserNames(prev));
+    }
+  }, [allUsers, friends]);
 
   // Fetch current announcement for admin panel
   useEffect(() => {
@@ -1267,6 +1279,35 @@ export default function ChatMain() {
     }
   };
 
+  // Helper function to enrich poll votes with user names
+  const enrichPollVotesWithUserNames = (messages: Message[]): Message[] => {
+    return messages.map(msg => {
+      if (msg.poll && msg.poll.votes) {
+        const enrichedVotes = msg.poll.votes.map(vote => {
+          // If userName is already present, keep it
+          if (vote.userName) return vote;
+          
+          // Look up user name from allUsers or friends
+          const user = [...allUsers, ...friends, { id: userId, name: currentUser?.name }].find(u => u.id === vote.userId);
+          
+          return {
+            ...vote,
+            userName: user?.name || 'Unknown User'
+          };
+        });
+        
+        return {
+          ...msg,
+          poll: {
+            ...msg.poll,
+            votes: enrichedVotes
+          }
+        };
+      }
+      return msg;
+    });
+  };
+
   const loadMessages = async (chatType: 'friend' | 'group' | 'news' | 'channel', chatId: string) => {
     if (!userId) {
       console.log("Skipping loadMessages - no userId");
@@ -1296,7 +1337,8 @@ export default function ChatMain() {
         const data = await response.json();
         if (data.messages) {
           console.log(`✅ [loadMessages] Loaded ${data.messages.length} news messages`);
-          setMessages(data.messages);
+          const enrichedMessages = enrichPollVotesWithUserNames(data.messages);
+          setMessages(enrichedMessages);
           setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
         }
         return;
@@ -1328,7 +1370,8 @@ export default function ChatMain() {
         if (pollMessages.length > 0) {
           console.log('📊 [loadMessages] Found poll messages:', pollMessages.map((m: any) => ({id: m.id, poll: m.poll})));
         }
-        setMessages(data.messages);
+        const enrichedMessages = enrichPollVotesWithUserNames(data.messages);
+        setMessages(enrichedMessages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
       }
     } catch (error) {
@@ -4462,7 +4505,7 @@ export default function ChatMain() {
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
                         {message.poll ? (
-                          <div className="max-w-2xl w-full">
+                          <div className="max-w-full md:max-w-2xl w-full overflow-x-auto">
                             <PollMessage
                               poll={message.poll}
                               pollId={message.id}
@@ -4618,7 +4661,8 @@ export default function ChatMain() {
                   No users to manage
                 </div>
               ) : (
-                allUsers.map((user) => (
+                <>
+                {allUsers.map((user) => (
                   <div key={user.id} className="p-3 border rounded-lg space-y-2">
                     <div className="flex items-center gap-3">
                       <Avatar>
@@ -4838,7 +4882,8 @@ export default function ChatMain() {
                       </Button>
                     )}
                   </div>
-                ))
+                ))}
+                </>
               )}
             </div>
           </ScrollArea>
