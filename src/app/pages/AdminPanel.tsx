@@ -119,6 +119,10 @@ export default function AdminPanel() {
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [currentAnnouncement, setCurrentAnnouncement] = useState<any>(null);
 
+  // Best Language states
+  const [bestLanguageKey, setBestLanguageKey] = useState("");
+  const [customLanguages, setCustomLanguages] = useState<Array<{ key: string; displayName: string }>>([]);
+
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
     if (!storedUserId) {
@@ -127,6 +131,8 @@ export default function AdminPanel() {
     }
     setUserId(storedUserId);
     loadCurrentUser(storedUserId);
+    loadCustomLanguages();
+    loadBestLanguage();
   }, [navigate]);
 
   const loadCurrentUser = async (id: string) => {
@@ -245,6 +251,54 @@ export default function AdminPanel() {
       }
     } catch (error) {
       console.error("Load all channels error:", error);
+    }
+  };
+
+  const loadCustomLanguages = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/prefix/custom-lang-`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const langs = (data.values || [])
+          .filter((v: any) => v && v.key)
+          .map((v: any) => ({
+            key: v.key.replace('custom-lang-', ''),
+            displayName: v.value?.displayName || v.value?.name || v.key.replace('custom-lang-', '')
+          }));
+        setCustomLanguages(langs);
+      }
+    } catch (error) {
+      console.error("Failed to load custom languages:", error);
+    }
+  };
+
+  const loadBestLanguage = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/best-language-of-month`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.value && data.value.key) {
+          setBestLanguageKey(data.value.key);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load best language:", error);
     }
   };
 
@@ -1279,6 +1333,29 @@ export default function AdminPanel() {
         return;
       }
 
+      // Save best language of the month
+      if (bestLanguageKey) {
+        const selectedLang = customLanguages.find(l => l.key === bestLanguageKey);
+        if (selectedLang) {
+          await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/best-language-of-month`,
+            {
+              method: 'PUT',
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                value: {
+                  key: selectedLang.key,
+                  displayName: selectedLang.displayName
+                }
+              }),
+            }
+          );
+        }
+      }
+
       toast.success("Settings saved successfully!");
     } catch (error) {
       console.error("Save settings error:", error);
@@ -1931,10 +2008,37 @@ export default function AdminPanel() {
                   </div>
                 </div>
 
+                <div className="border-t border-gray-800 pt-6">
+                  <h3 className="text-lg font-semibold mb-4 text-white flex items-center gap-2">
+                    ⭐ Best Language of the Month
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="bestLanguage" className="text-white">Select Language</Label>
+                      <select
+                        id="bestLanguage"
+                        value={bestLanguageKey}
+                        onChange={(e) => setBestLanguageKey(e.target.value)}
+                        className="mt-2 w-full bg-gray-800 border border-gray-700 text-white rounded-md px-3 py-2"
+                      >
+                        <option value="">None</option>
+                        {customLanguages.map(lang => (
+                          <option key={lang.key} value={lang.key}>
+                            {lang.displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">
+                        This language will be featured in all users' settings with a special highlight.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Save Settings Button */}
                 <div className="border-t border-gray-800 pt-6">
-                  <Button 
-                    onClick={handleSaveSettings} 
+                  <Button
+                    onClick={handleSaveSettings}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     Save Settings

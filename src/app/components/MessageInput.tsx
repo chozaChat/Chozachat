@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Reply, Pencil, X, Smile, Send, Paperclip } from 'lucide-react';
 import { RefObject } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface Message {
   id: string;
@@ -45,6 +46,8 @@ export function MessageInput({
   messageInputRef,
   messagesEndRef
 }: MessageInputProps) {
+  const { t } = useLanguage();
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingMessage) {
@@ -128,7 +131,7 @@ export function MessageInput({
         <Input
           ref={messageInputRef}
           type="text"
-          placeholder={editingMessage ? "Edit your message..." : "Type a message... 💬"}
+          placeholder={editingMessage ? t('message.editMessage') : t('message.typeMessage')}
           value={messageText}
           onChange={(e) => {
             setMessageText(e.target.value);

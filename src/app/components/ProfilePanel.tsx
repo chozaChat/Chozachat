@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
 import EmojiPicker from "emoji-picker-react";
 import { useBlur } from "../contexts/BlurContext";
+import { useLanguage } from "../contexts/LanguageContext";
 
 const SERVER_ID = "make-server-a1c86d03";
 
@@ -39,6 +40,7 @@ interface ProfilePanelProps {
 
 export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onRemoveFriend, friends, allUsers }: ProfilePanelProps) {
   const { blurStrength } = useBlur();
+  const { t } = useLanguage();
   const [members, setMembers] = useState<User[]>([]);
   const [allFriends, setAllFriends] = useState<User[]>([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -144,7 +146,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
         return;
       }
 
-      toast.success(`${type === 'channel' ? 'Channel' : 'Group'} updated!`);
+      toast.success(`${type === 'channel' ? t('common.channel') : t('common.group')} ${t('profile.updated')}`);
       setIsEditing(false);
       onUpdate();
     } catch (error) {
@@ -181,7 +183,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
         }
       }
 
-      toast.success("Members added successfully!");
+      toast.success(t('profile.membersAdded'));
       setSelectedMembersToAdd([]);
       setShowAddMembersDialog(false);
       loadMembers();
@@ -212,7 +214,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
         return;
       }
 
-      toast.success("Member removed");
+      toast.success(t('profile.memberRemoved'));
       setShowRemoveMemberConfirm(null);
       loadMembers();
       onUpdate();
@@ -281,7 +283,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
         return;
       }
 
-      toast.success(`${type === 'channel' ? 'Channel' : 'Group'} deleted`);
+      toast.success(`${type === 'channel' ? t('common.channel') : t('common.group')} ${t('profile.deleted')}`);
       onClose();
       onUpdate();
     } catch (error) {
@@ -313,7 +315,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
       link = `${window.location.origin}/#/c/${usernameWithoutAt}`;
     }
     navigator.clipboard.writeText(link);
-    toast.success(`${type === 'user' ? 'Profile' : type === 'channel' ? 'Channel' : 'Group'} link copied!`);
+    toast.success(`${type === 'user' ? t('profile.title') : type === 'channel' ? t('common.channel') : t('common.group')} ${t('profile.linkCopied')}`);
   };
 
   const availableFriendsToAdd = allFriends.filter(
@@ -328,7 +330,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
       {/* Header */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          {type === 'user' ? 'Profile' : type === 'channel' ? 'Channel Info' : 'Group Info'}
+          {type === 'user' ? t('profile.title') : type === 'channel' ? t('profile.channelInfo') : t('profile.groupInfo')}
         </h2>
         <Button variant="ghost" size="icon" onClick={onClose}>
           <X className="size-5" />
@@ -430,7 +432,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                 )}
                 {type !== 'user' && data?.members && (
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    {data.members.length} {data.members.length === 1 ? 'member' : 'members'}
+                    {data.members.length} {data.members.length === 1 ? t('profile.memberSingular') : t('profile.memberPlural')}
                   </p>
                 )}
               </>
@@ -465,11 +467,11 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
           {(type === 'group' || type === 'channel') && data?.members && (
             <div className="border-t pt-4 dark:border-gray-700">
               <Label className="text-base font-semibold mb-3 block text-gray-900 dark:text-white">
-                {type === 'channel' ? 'Channel' : 'Group'} Members ({data.members.length})
+                {type === 'channel' ? t('profile.channelMembers') : t('profile.groupMembers')} ({data.members.length})
               </Label>
               {type === 'channel' && (
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                  Only admins can post messages in this channel. Members can only read.
+                  {t('profile.channelAdminsOnly')}
                 </p>
               )}
               <ScrollArea className="h-48 border rounded-lg p-2 dark:border-gray-700">
@@ -496,7 +498,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                             {member?.verified && <Shield className="inline size-3 ml-1 text-blue-500" />}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {isChannelCreator ? 'Creator' : isAdmin ? 'Admin' : 'Member'}
+                            {isChannelCreator ? t('profile.creator') : isAdmin ? t('profile.admin') : t('profile.member')}
                           </div>
                         </div>
                         {/* Admin management buttons for channel creators */}
@@ -557,7 +559,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
               onClick={handleCopyLink}
             >
               <Copy className="size-4 mr-2" />
-              Copy {type === 'user' ? 'Profile' : type === 'channel' ? 'Channel' : 'Group'} Link
+              {type === 'user' ? t('profile.copyProfileLink') : type === 'channel' ? t('profile.copyChannelLink') : t('profile.copyGroupLink')}
             </Button>
 
             {type === 'user' && onRemoveFriend && (
@@ -567,7 +569,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                 onClick={handleUnfriend}
               >
                 <UserMinus className="size-4 mr-2" />
-                Unfriend
+                {t('profile.unfriend')}
               </Button>
             )}
 
@@ -580,7 +582,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                     onClick={() => setIsEditing(true)}
                   >
                     <Edit2 className="size-4 mr-2" />
-                    Edit {type === 'channel' ? 'Channel' : 'Group'}
+                    {type === 'channel' ? t('profile.editChannel') : t('profile.editGroup')}
                   </Button>
                 )}
 
@@ -591,7 +593,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                     onClick={handleLeave}
                   >
                     <LogOut className="size-4 mr-2" />
-                    Leave {type === 'channel' ? 'Channel' : 'Group'}
+                    {type === 'channel' ? t('profile.leaveChannel') : t('profile.leaveGroup')}
                   </Button>
                 )}
 
@@ -602,7 +604,7 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
                     onClick={handleDelete}
                   >
                     <Trash2 className="size-4 mr-2" />
-                    Delete {type === 'channel' ? 'Channel' : 'Group'}
+                    {type === 'channel' ? t('profile.deleteChannel') : t('profile.deleteGroup')}
                   </Button>
                 )}
               </>
@@ -615,9 +617,9 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
       <Dialog open={showAddMembersDialog} onOpenChange={setShowAddMembersDialog}>
         <DialogContent className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
           <DialogHeader>
-            <DialogTitle className="text-gray-900 dark:text-white">Add Members</DialogTitle>
+            <DialogTitle className="text-gray-900 dark:text-white">{t('profile.addMembers')}</DialogTitle>
             <DialogDescription className="text-gray-600 dark:text-gray-400">
-              Select friends to add to this {type}
+              {t('profile.selectFriends')} {type === 'channel' ? t('common.channel').toLowerCase() : t('common.group').toLowerCase()}
             </DialogDescription>
           </DialogHeader>
 
@@ -661,10 +663,10 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddMembersDialog(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleAddMembers} disabled={selectedMembersToAdd.length === 0}>
-              Add {selectedMembersToAdd.length > 0 ? `(${selectedMembersToAdd.length})` : ''}
+              {t('common.add')} {selectedMembersToAdd.length > 0 ? `(${selectedMembersToAdd.length})` : ''}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -674,21 +676,21 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
       <Dialog open={!!showRemoveMemberConfirm} onOpenChange={(open) => !open && setShowRemoveMemberConfirm(null)}>
         <DialogContent className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
           <DialogHeader>
-            <DialogTitle className="text-gray-900 dark:text-white">Remove Member</DialogTitle>
+            <DialogTitle className="text-gray-900 dark:text-white">{t('profile.removeMember')}</DialogTitle>
             <DialogDescription className="text-gray-600 dark:text-gray-400">
-              Are you sure you want to remove this member from the {type}?
+              {t('profile.removeMemberConfirm')} {type === 'channel' ? t('common.channel').toLowerCase() : t('common.group').toLowerCase()}?
             </DialogDescription>
           </DialogHeader>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRemoveMemberConfirm(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               variant="destructive"
               onClick={() => showRemoveMemberConfirm && handleRemoveMember(showRemoveMemberConfirm)}
             >
-              Remove
+              {t('common.remove')}
             </Button>
           </DialogFooter>
         </DialogContent>

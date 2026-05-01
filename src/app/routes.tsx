@@ -7,6 +7,8 @@ import AdminPanel from "./pages/AdminPanel";
 import InviteUser from "./pages/InviteUser";
 import InviteGroup from "./pages/InviteGroup";
 import InviteChannel from "./pages/InviteChannel";
+import CustomLanguageEditor from "./pages/CustomLanguageEditor";
+import SetLanguage from "./pages/SetLanguage";
 import NotFound from "./pages/NotFound";
 
 export const router = createHashRouter([
@@ -18,6 +20,9 @@ export const router = createHashRouter([
       { path: "signup", element: <Signup /> },
       { path: "chat", element: <ChatMain /> },
       { path: "admin", element: <AdminPanel /> },
+      { path: "lang", element: <CustomLanguageEditor /> },
+      { path: "lang/:languagename", element: <CustomLanguageEditor /> },
+      { path: "setlang/:name", element: <SetLanguage /> },
       { path: "u/:username", element: <InviteUser /> },
       { path: "g/:groupname", element: <InviteGroup /> },
       { path: "c/:channelname", element: <InviteChannel /> },

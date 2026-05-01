@@ -14,11 +14,12 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
 import { ProfilePanel } from "../components/ProfilePanel";
-import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles, Reply, Pencil } from "lucide-react";
+import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles, Reply, Pencil, Globe, User, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 import { useBlur } from "../contexts/BlurContext";
-import { CustomPrompt } from "../components/CustomPrompt";
+import { useLanguage } from "../contexts/LanguageContext";
+import { CustomPrompt, CustomConfirm } from "../components/CustomPrompt";
 import { StickerPicker } from "../components/StickerPicker";
 import { MessageItem } from "../components/MessageItem";
 import { MessageInput } from "../components/MessageInput";
@@ -26,6 +27,138 @@ import { PollCreator, PollData } from "../components/PollCreator";
 import { PollMessage } from "../components/PollMessage";
 import { AnnouncementBanner } from "../components/AnnouncementBanner";
 import { motion, AnimatePresence } from "motion/react";
+
+const SERVER_ID = 'make-server-a1c86d03';
+
+function BestLanguageOfMonth({ navigate, setSettingsOpen }: { navigate: any; setSettingsOpen: (open: boolean) => void }) {
+  const [bestLang, setBestLang] = useState<{ key: string; displayName: string } | null>(null);
+  const { t, setLanguage } = useLanguage();
+
+  useEffect(() => {
+    loadBestLanguage();
+  }, []);
+
+  const loadBestLanguage = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/best-language-of-month`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.value) {
+          setBestLang(data.value);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load best language:", error);
+    }
+  };
+
+  const saveLanguage = (langKey: string, displayName: string) => {
+    const saved = JSON.parse(localStorage.getItem('savedLanguages') || '[]');
+    if (!saved.find((l: any) => l.key === langKey)) {
+      saved.push({ key: langKey, displayName });
+      localStorage.setItem('savedLanguages', JSON.stringify(saved));
+      toast.success(`${displayName} saved!`);
+    } else {
+      toast.info(`${displayName} already saved`);
+    }
+  };
+
+  if (!bestLang) return null;
+
+  return (
+    <div className="pt-3 border-t dark:border-gray-700">
+      <Label className="text-purple-600 dark:text-purple-400">⭐ {t('settings.bestLanguage')}</Label>
+      <div className="mt-2 p-3 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium dark:text-white flex-1">{bestLang.displayName}</span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => saveLanguage(bestLang.key, bestLang.displayName)}
+            >
+              {t('common.save')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setLanguage(bestLang.key);
+                toast.success(`Language set to ${bestLang.displayName}`);
+                setSettingsOpen(false);
+              }}
+            >
+              {t('settings.use')}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SavedLanguages() {
+  const [savedLangs, setSavedLangs] = useState<Array<{ key: string; displayName: string }>>([]);
+  const { t, setLanguage, language } = useLanguage();
+
+  useEffect(() => {
+    loadSavedLanguages();
+  }, []);
+
+  const loadSavedLanguages = () => {
+    const saved = JSON.parse(localStorage.getItem('savedLanguages') || '[]');
+    setSavedLangs(saved);
+  };
+
+  const removeSavedLanguage = (langKey: string) => {
+    const saved = JSON.parse(localStorage.getItem('savedLanguages') || '[]');
+    const filtered = saved.filter((l: any) => l.key !== langKey);
+    localStorage.setItem('savedLanguages', JSON.stringify(filtered));
+    setSavedLangs(filtered);
+    toast.success(t('settings.languageRemoved'));
+  };
+
+  if (savedLangs.length === 0) {
+    return (
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        {t('settings.noSavedLanguages')}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {savedLangs.map(lang => (
+        <div key={lang.key} className="flex items-center justify-between p-2 border rounded-lg dark:border-gray-700">
+          <span className="text-sm dark:text-white">{lang.displayName}</span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant={language === lang.key ? 'default' : 'outline'}
+              onClick={() => setLanguage(lang.key)}
+            >
+              {language === lang.key ? t('settings.active') : t('settings.use')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => removeSavedLanguage(lang.key)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const COMMON_EMOJIS = [
   "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "���", "🙃",
@@ -129,6 +262,7 @@ interface Message {
   content?: string;
   timestamp: string;
   edited?: boolean;
+  readBy?: string[];
   replyTo?: {
     id: string;
     content: string;
@@ -150,6 +284,7 @@ export default function ChatMain() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const { blurStrength, setBlurStrength } = useBlur();
+  const { language, setLanguage, t, availableLanguages, loadCustomLanguages } = useLanguage();
   
   // Helper to generate blur classes
   const getBlurClasses = (lightBg: string, darkBg: string) => {
@@ -233,7 +368,13 @@ export default function ChatMain() {
   const [trollChannelConnected, setTrollChannelConnected] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
-  
+  const [showNotificationsWhenActive, setShowNotificationsWhenActive] = useState(() => {
+    return localStorage.getItem('showNotificationsWhenActive') === 'true';
+  });
+  const globalNotificationChannelRef = useRef<any>(null);
+  const [chatMembersData, setChatMembersData] = useState<Record<string, User>>({});
+  const [lastMessages, setLastMessages] = useState<Record<string, { content: string, timestamp: string }>>({});
+
   // Custom prompts
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptConfig, setPromptConfig] = useState<{
@@ -257,7 +398,26 @@ export default function ChatMain() {
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [editMessageText, setEditMessageText] = useState("");
   const [messageMenuOpen, setMessageMenuOpen] = useState<string | null>(null);
-  
+
+  // Confirm dialog
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    title: string;
+    description: string;
+    onConfirm: () => void;
+    variant?: 'default' | 'destructive';
+  }>({
+    title: '',
+    description: '',
+    onConfirm: () => {},
+    variant: 'default'
+  });
+
+  const showConfirm = (title: string, description: string, onConfirm: () => void, variant: 'default' | 'destructive' = 'default') => {
+    setConfirmDialogConfig({ title, description, onConfirm, variant });
+    setConfirmDialogOpen(true);
+  };
+
   // Initial loading state
   const [initialLoading, setInitialLoading] = useState(true);
 
@@ -583,6 +743,16 @@ export default function ChatMain() {
                 return prev;
               });
               setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+
+              // Update last message
+              const chatKey = `${selectedChat.type}-${selectedChat.id}`;
+              setLastMessages(prev => ({
+                ...prev,
+                [chatKey]: {
+                  content: messageData.message.content || messageData.message.text || '',
+                  timestamp: messageData.message.timestamp
+                }
+              }));
             } else {
               // Fallback: reload messages from server
               loadMessages(selectedChat.type, selectedChat.id);
@@ -631,6 +801,98 @@ export default function ChatMain() {
       clearInterval(statsInterval);
     };
   }, [userId, selectedChat]);
+
+  // Clear unread messages and update last read timestamp when a chat is selected
+  useEffect(() => {
+    if (selectedChat) {
+      const chatKey = `${selectedChat.type}-${selectedChat.id}`;
+
+      // Clear unread count
+      setUnreadMessages(prev => {
+        const newUnread = { ...prev };
+        delete newUnread[chatKey];
+        return newUnread;
+      });
+
+      // Update last read timestamp
+      const lastReadKey = `lastRead-${selectedChat.type}-${selectedChat.id}`;
+      localStorage.setItem(lastReadKey, new Date().toISOString());
+
+      // Clear previous chat members data
+      setChatMembersData({});
+    }
+  }, [selectedChat]);
+
+  // Update last read and mark messages as read when new messages arrive in the current chat
+  useEffect(() => {
+    if (selectedChat && messages.length > 0) {
+      const lastReadKey = `lastRead-${selectedChat.type}-${selectedChat.id}`;
+      localStorage.setItem(lastReadKey, new Date().toISOString());
+
+      // Mark all messages in this chat as read
+      markMessagesAsRead(selectedChat.type, selectedChat.id);
+    }
+  }, [messages, selectedChat]);
+
+  // Global notification listener for ALL chats (works even when user is not viewing a specific chat)
+  useEffect(() => {
+    if (!userId || !notificationsEnabled) return;
+
+    console.log('[Notifications] Setting up global notification listener for user:', userId);
+
+    // Create a user-specific notification channel
+    const notifChannelName = `user-notifications-${userId}`;
+    globalNotificationChannelRef.current = supabase.channel(notifChannelName, {
+      config: {
+        broadcast: {
+          self: false, // Don't receive own messages
+        },
+      },
+    });
+
+    globalNotificationChannelRef.current
+      .on('broadcast', { event: 'new-message-notification' }, async (payload: any) => {
+        console.log('[Notifications] Received notification:', payload);
+        if (!payload || !payload.payload) return;
+
+        const data = payload.payload;
+        const { senderId, senderName, senderEmoji, messageText, chatType, chatId, chatName } = data;
+
+        // Don't notify for own messages
+        if (senderId === userId) return;
+
+        // Don't notify if currently viewing this chat
+        if (selectedChat && selectedChat.type === chatType && selectedChat.id === chatId) {
+          // User is currently viewing this chat, skip notification
+          return;
+        }
+
+        // Show notification
+        showMessageNotification(
+          senderName || t('message.someone'),
+          messageText || (language === 'ru' ? 'Новое сообщение' : 'New message'),
+          senderEmoji,
+          { type: chatType, id: chatId, name: chatName }
+        );
+
+        // Update unread count
+        setUnreadMessages((prev) => ({
+          ...prev,
+          [`${chatType}-${chatId}`]: (prev[`${chatType}-${chatId}`] || 0) + 1,
+        }));
+      })
+      .subscribe((status: string) => {
+        console.log('[Notifications] Global notification channel status:', status);
+      });
+
+    return () => {
+      if (globalNotificationChannelRef.current) {
+        console.log('[Notifications] Cleaning up global notification listener');
+        supabase.removeChannel(globalNotificationChannelRef.current);
+        globalNotificationChannelRef.current = null;
+      }
+    };
+  }, [userId, notificationsEnabled, selectedChat]);
 
   // Listen for troll zone effects via Supabase Realtime
   useEffect(() => {
@@ -1197,6 +1459,29 @@ export default function ChatMain() {
     }
   };
 
+  const fetchGroupById = async (groupId: string): Promise<Group | null> => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${groupId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || ''
+          },
+        }
+      );
+      if (!response.ok) {
+        console.error("Failed to fetch group:", response.status);
+        return null;
+      }
+      const data = await response.json();
+      return data.group || null;
+    } catch (error) {
+      console.error("Error fetching group:", error);
+      return null;
+    }
+  };
+
   const loadFriends = async () => {
     if (!userId) {
       console.log("Skipping loadFriends - no userId");
@@ -1313,27 +1598,27 @@ export default function ChatMain() {
       console.log("Skipping loadMessages - no userId");
       return;
     }
-    
+
     console.log(`🔍 [loadMessages] Loading messages for chatType: ${chatType}, chatId: ${chatId}`);
-    
+
     try {
       // If it's news channel, use special news endpoint
       if (chatType === 'news') {
         const response = await fetch(
           `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/news`,
           {
-            headers: { 
+            headers: {
               Authorization: `Bearer ${publicAnonKey}`,
               'X-User-Id': userId
             },
           }
         );
-        
+
         if (!response.ok) {
           console.error("Failed to connect to CFS, failed to load news: ConnectEID", response.status);
           return;
         }
-        
+
         const data = await response.json();
         if (data.messages) {
           console.log(`✅ [loadMessages] Loaded ${data.messages.length} news messages`);
@@ -1347,19 +1632,19 @@ export default function ChatMain() {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${chatId}`,
         {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${publicAnonKey}`,
             'X-User-Id': userId
           },
         }
       );
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Failed to connect to Chozachat Framework Serives: ConnectEID", response.status, errorText);
         return;
       }
-      
+
       const data = await response.json();
       console.log(`✅ [loadMessages] Loaded ${data.messages?.length || 0} messages for ${chatType}:${chatId}`);
       console.log('📝 [loadMessages] Last message:', JSON.stringify(data.messages?.[data.messages.length - 1]));
@@ -1373,9 +1658,107 @@ export default function ChatMain() {
         const enrichedMessages = enrichPollVotesWithUserNames(data.messages);
         setMessages(enrichedMessages);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+
+        // Store last message for this chat
+        if (enrichedMessages.length > 0) {
+          const lastMsg = enrichedMessages[enrichedMessages.length - 1];
+          const chatKey = `${chatType}-${chatId}`;
+          setLastMessages(prev => ({
+            ...prev,
+            [chatKey]: {
+              content: lastMsg.content || lastMsg.text || '',
+              timestamp: lastMsg.timestamp
+            }
+          }));
+        }
+
+        // For group or channel chats, fetch member data
+        if (chatType === 'group' || chatType === 'channel') {
+          loadChatMembersData(chatType, chatId);
+        }
       }
     } catch (error) {
       console.error("Failed to connect to Chozachat Framework Serives: ConnectEID", error);
+    }
+  };
+
+  const loadChatMembersData = async (chatType: 'group' | 'channel', chatId: string) => {
+    try {
+      // Get the group/channel to find all members
+      const itemResponse = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/groups/${chatId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId || ''
+          },
+        }
+      );
+
+      if (!itemResponse.ok) {
+        console.error("Failed to fetch group/channel data");
+        return;
+      }
+
+      const itemData = await itemResponse.json();
+      const memberIds = itemData.group?.members || [];
+
+      // Fetch user data for all members
+      const memberDataPromises = memberIds.map(async (memberId: string) => {
+        try {
+          const userResponse = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': memberId
+              },
+            }
+          );
+
+          if (userResponse.ok) {
+            const userData = await userResponse.json();
+            return userData.user;
+          }
+        } catch (error) {
+          console.error(`Failed to fetch user ${memberId}:`, error);
+        }
+        return null;
+      });
+
+      const membersData = await Promise.all(memberDataPromises);
+      const membersMap: Record<string, User> = {};
+
+      membersData.forEach((user) => {
+        if (user) {
+          membersMap[user.id] = user;
+        }
+      });
+
+      setChatMembersData(membersMap);
+    } catch (error) {
+      console.error("Failed to load chat members data:", error);
+    }
+  };
+
+  const markMessagesAsRead = async (chatType: 'friend' | 'group' | 'news' | 'channel', chatId: string) => {
+    if (!userId) return;
+
+    try {
+      await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/read-all`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId
+          },
+          body: JSON.stringify({ chatId, chatType }),
+        }
+      );
+    } catch (error) {
+      console.error("Failed to mark messages as read:", error);
     }
   };
 
@@ -1661,36 +2044,66 @@ export default function ChatMain() {
 
     const permission = await Notification.requestPermission();
     setNotificationPermission(permission);
-    
+
     if (permission === "granted") {
       setNotificationsEnabled(true);
-      toast.success("Notifications enabled!");
+      toast.success(t('notif.notificationsEnabled'));
+
+      // Show a test notification to confirm it works
+      try {
+        const testNotification = new Notification("✓ ChozaChat Notifications", {
+          body: language === 'ru'
+            ? "Вы теперь будете получать уведомления о новых сообщениях"
+            : "You will now receive notifications for new messages",
+          icon: "/favicon.ico",
+          tag: "test-notification",
+        });
+        setTimeout(() => testNotification.close(), 3000);
+      } catch (error) {
+        console.error('Failed to show test notification:', error);
+      }
     } else if (permission === "denied") {
       toast.error("Notification permission denied. Please try again.");
     }
   };
 
   // Show notification for new message
-  const showMessageNotification = (senderName: string, message: string, senderEmoji?: string) => {
+  const showMessageNotification = (senderName: string, message: string, senderEmoji?: string, chatData?: { type: string; id: string; name: string }) => {
     if (!notificationsEnabled || notificationPermission !== "granted") return;
-    
-    // Don't show notification if user is viewing the chat
-    if (document.hasFocus()) return;
 
-    const notification = new Notification(`${senderEmoji || ""} ${senderName}`, {
-      body: message,
-      icon: "/favicon.ico",
-      tag: "chat-message",
-      requireInteraction: false,
-    });
+    // Check if we should show notifications when active
+    if (!showNotificationsWhenActive && document.hasFocus()) return;
 
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-    };
+    // Check if page is visible - this works even if tab is in background
+    const isPageHidden = document.hidden || document.visibilityState === 'hidden';
 
-    // Auto-close after 5 seconds
-    setTimeout(() => notification.close(), 5000);
+    // Only show notification if page is hidden OR user enabled notifications when active
+    if (!isPageHidden && !showNotificationsWhenActive) return;
+
+    try {
+      const notification = new Notification(`${senderEmoji || "💬"} ${senderName}`, {
+        body: message,
+        icon: "/favicon.ico",
+        badge: "/favicon.ico",
+        tag: chatData ? `chat-${chatData.type}-${chatData.id}` : "chat-message",
+        requireInteraction: false,
+        silent: false,
+      });
+
+      notification.onclick = () => {
+        window.focus();
+        // Switch to the chat if chatData is provided
+        if (chatData) {
+          setSelectedChat(chatData);
+        }
+        notification.close();
+      };
+
+      // Auto-close after 5 seconds
+      setTimeout(() => notification.close(), 5000);
+    } catch (error) {
+      console.error('Failed to show notification:', error);
+    }
   };
 
   const handleAddFriend = async (e: React.FormEvent) => {
@@ -2230,12 +2643,12 @@ export default function ChatMain() {
       if (selectedChat.type === 'ai') {
         // Get API key (user's personal key or admin's global key)
         const userApiKey = localStorage.getItem(`geminiApiKey_${userId}`);
-        
-        // Load global API key from Supabase settings
+
+        // Load global API key from Supabase settings (public endpoint)
         let globalApiKey = '';
         try {
           const settingsResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/settings`,
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/settings/gemini-api-key`,
             {
               headers: {
                 Authorization: `Bearer ${publicAnonKey}`,
@@ -2245,12 +2658,12 @@ export default function ChatMain() {
           );
           if (settingsResponse.ok) {
             const settingsData = await settingsResponse.json();
-            globalApiKey = settingsData.settings?.geminiApiKey || '';
+            globalApiKey = settingsData.geminiApiKey || '';
           }
         } catch (error) {
           console.log('Could not load global API key from settings');
         }
-        
+
         const apiKey = userApiKey || globalApiKey || '';
         
         if (!apiKey) {
@@ -2375,16 +2788,65 @@ export default function ChatMain() {
           }
           return m;
         }));
-        
+
+        // Update last message for news
+        setLastMessages(prev => ({
+          ...prev,
+          'news-news': {
+            content: messageContent,
+            timestamp: new Date().toISOString()
+          }
+        }));
+
         // Broadcast new news message via Realtime using existing channel
         if (messageChannelRef.current) {
           await messageChannelRef.current.send({
             type: 'broadcast',
             event: 'new-message',
-            payload: { chatType: 'news', chatId: 'news' }
+            payload: { chatType: 'news', chatId: 'news', message: data.message, senderId: userId, text: messageContent }
           });
         }
-        
+
+        // Broadcast notification to all users (news is global)
+        try {
+          // Get all users to notify
+          const allUsersResponse = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                "X-User-Id": userId || "",
+              },
+            }
+          );
+
+          if (allUsersResponse.ok) {
+            const usersData = await allUsersResponse.json();
+            const allUserIds = (usersData.users || []).map((u: any) => u.id).filter((id: string) => id !== userId);
+
+            // Broadcast to each user's notification channel
+            for (const memberId of allUserIds) {
+              const notifChannel = supabase.channel(`user-notifications-${memberId}`);
+              await notifChannel.send({
+                type: 'broadcast',
+                event: 'new-message-notification',
+                payload: {
+                  senderId: userId,
+                  senderName: currentUser?.name || 'Admin',
+                  senderEmoji: currentUser?.emoji || '📰',
+                  messageText: messageContent,
+                  chatType: 'news',
+                  chatId: 'news',
+                  chatName: 'News Channel',
+                }
+              });
+              await supabase.removeChannel(notifChannel);
+            }
+          }
+        } catch (error) {
+          console.error('[Notifications] Failed to broadcast news notifications:', error);
+        }
+
         toast.success("News posted!");
         return;
       }
@@ -2423,7 +2885,7 @@ export default function ChatMain() {
 
       const data = await response.json();
       console.log("Message sent successfully");
-      
+
       // Replace temp message with real message from server, preserving replyTo if server didn't include it
       setMessages(prev => prev.map(m => {
         if (m.id === tempId) {
@@ -2434,14 +2896,72 @@ export default function ChatMain() {
         }
         return m;
       }));
-      
+
+      // Update last message
+      const chatKey = `${selectedChat.type}-${selectedChat.id}`;
+      setLastMessages(prev => ({
+        ...prev,
+        [chatKey]: {
+          content: messageContent,
+          timestamp: new Date().toISOString()
+        }
+      }));
+
       // Broadcast new message via Realtime using existing channel
       if (messageChannelRef.current) {
         await messageChannelRef.current.send({
           type: 'broadcast',
           event: 'new-message',
-          payload: { chatType: selectedChat.type, chatId: selectedChat.id }
+          payload: {
+            chatType: selectedChat.type,
+            chatId: selectedChat.id,
+            message: data.message,
+            senderId: userId,
+            text: messageContent
+          }
         });
+      }
+
+      // Broadcast notification to all chat members
+      try {
+        // Get list of members to notify
+        let membersToNotify: string[] = [];
+
+        if (selectedChat.type === 'friend') {
+          // For DM, notify the other person
+          membersToNotify = [selectedChat.id];
+        } else if (selectedChat.type === 'group') {
+          // For groups, notify all members except sender
+          const group = await fetchGroupById(selectedChat.id);
+          membersToNotify = (group?.members || []).filter(id => id !== userId);
+        } else if (selectedChat.type === 'channel') {
+          // For channels, notify all members except sender
+          const channel = channels.find(c => c.id === selectedChat.id);
+          membersToNotify = (channel?.members || []).filter(id => id !== userId);
+        }
+
+        // Broadcast to each member's notification channel
+        for (const memberId of membersToNotify) {
+          const notifChannel = supabase.channel(`user-notifications-${memberId}`);
+          await notifChannel.send({
+            type: 'broadcast',
+            event: 'new-message-notification',
+            payload: {
+              senderId: userId,
+              senderName: currentUser?.name || 'Someone',
+              senderEmoji: currentUser?.emoji,
+              messageText: messageContent,
+              chatType: selectedChat.type,
+              chatId: selectedChat.id,
+              chatName: selectedChat.name,
+            }
+          });
+          // Clean up the channel
+          await supabase.removeChannel(notifChannel);
+        }
+      } catch (error) {
+        console.error('[Notifications] Failed to broadcast notifications:', error);
+        // Don't fail the message send if notifications fail
       }
     } catch (error) {
       console.error("Send message error:", error);
@@ -2921,18 +3441,22 @@ export default function ChatMain() {
   };
 
   const getSenderName = (senderId: string) => {
-    if (senderId === userId) return "You";
+    if (senderId === userId) return t('message.you');
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend.name;
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return chatMember.name;
     const user = allUsers.find(u => u.id === senderId);
     if (user) return user.name;
-    return "Unknown";
+    return t('message.unknown');
   };
 
   const getSenderEmoji = (senderId: string) => {
     if (senderId === userId) return currentUser?.emoji;
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend?.emoji;
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return chatMember.emoji;
     const user = allUsers.find(u => u.id === senderId);
     return user?.emoji;
   };
@@ -2941,6 +3465,8 @@ export default function ChatMain() {
     if (senderId === userId) return currentUser?.tag;
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend?.tag;
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return chatMember.tag;
     const user = allUsers.find(u => u.id === senderId);
     return user?.tag;
   };
@@ -2949,6 +3475,8 @@ export default function ChatMain() {
     if (senderId === userId) return currentUser?.tagColor;
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend?.tagColor;
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return chatMember.tagColor;
     const user = allUsers.find(u => u.id === senderId);
     return user?.tagColor;
   };
@@ -2957,6 +3485,8 @@ export default function ChatMain() {
     if (senderId === userId) return isUserAdmin(currentUser);
     const friend = friends.find(f => f.id === senderId);
     if (friend) return isUserAdmin(friend);
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return isUserAdmin(chatMember);
     const user = allUsers.find(u => u.id === senderId);
     return isUserAdmin(user);
   };
@@ -2965,6 +3495,8 @@ export default function ChatMain() {
     if (senderId === userId) return currentUser?.verified;
     const friend = friends.find(f => f.id === senderId);
     if (friend) return friend?.verified;
+    const chatMember = chatMembersData[senderId];
+    if (chatMember) return chatMember.verified;
     const user = allUsers.find(u => u.id === senderId);
     return user?.verified;
   };
@@ -3341,15 +3873,15 @@ export default function ChatMain() {
                       onClick={toggleTheme}
                     >
                       {theme === 'light' ? <Moon className="size-5 mr-2" /> : <Sun className="size-5 mr-2" />}
-                      {theme === 'light' ? 'Dark' : 'Light'} Mode
+                      {theme === 'light' ? t('settings.darkMode') : t('settings.lightMode')}
                     </Button>
                   </motion.div>
 
                   {/* Settings Button */}
                   <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
                     <DialogTrigger asChild>
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800"
                         onClick={() => {
                           setEditName(currentUser?.name || "");
@@ -3365,25 +3897,47 @@ export default function ChatMain() {
                           } else {
                             setGeminiApiKey("");
                           }
+                          // Load custom languages
+                          loadCustomLanguages();
                         }}
                       >
                         <Settings className="size-5 mr-2" />
-                        Settings
+                        {t('settings.settings')}
                       </Button>
                     </DialogTrigger>
-              <DialogContent 
-                className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
+              <DialogContent
+                className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'} max-w-2xl`}
                 style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
               >
                 <DialogHeader>
-                  <DialogTitle>Edit Profile</DialogTitle>
-                  <DialogDescription>Update your name and username</DialogDescription>
+                  <DialogTitle>{t('settings.title')}</DialogTitle>
+                  <DialogDescription>{t('settings.updateProfile')}</DialogDescription>
                 </DialogHeader>
 
-                <form onSubmit={handleUpdateProfile}>
-                  <div className="space-y-4">
+                <Tabs defaultValue="profile" className="w-full">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="profile" className="flex items-center justify-center gap-2">
+                      <User className="size-4" />
+                      <span className="hidden sm:inline">{t('settings.profile')}</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="appearance" className="flex items-center justify-center gap-2">
+                      <Palette className="size-4" />
+                      <span className="hidden sm:inline">{t('settings.appearance')}</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="notifications" className="flex items-center justify-center gap-2">
+                      <Bell className="size-4" />
+                      <span className="hidden sm:inline">{t('settings.notifications')}</span>
+                    </TabsTrigger>
+                    <TabsTrigger value="extras" className="flex items-center justify-center gap-2">
+                      <Settings className="size-4" />
+                      <span className="hidden sm:inline">{t('settings.extras')}</span>
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <form onSubmit={handleUpdateProfile}>
+                    <TabsContent value="profile" className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                     <div>
-                      <Label htmlFor="editName">Name</Label>
+                      <Label htmlFor="editName">{t('auth.name')}</Label>
                       <Input
                         id="editName"
                         type="text"
@@ -3394,7 +3948,7 @@ export default function ChatMain() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="editUsername">Username</Label>
+                      <Label htmlFor="editUsername">{t('auth.username')}</Label>
                       <Input
                         id="editUsername"
                         type="text"
@@ -3405,11 +3959,11 @@ export default function ChatMain() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="editTag">Tag</Label>
+                      <Label htmlFor="editTag">{t('settings.tag')}</Label>
                       <Input
                         id="editTag"
                         type="text"
-                        placeholder="Your custom tag (e.g. Developer, Artist)"
+                        placeholder={t('settings.tagPlaceholder')}
                         value={editTag}
                         onChange={(e) => setEditTag(e.target.value)}
                       />
@@ -3473,7 +4027,7 @@ export default function ChatMain() {
                       </div>
                     )}
                     <div>
-                      <Label>Profile Emoji</Label>
+                      <Label>{t('settings.profileEmoji')}</Label>
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <div className="text-4xl">{editEmoji || "😀"}</div>
@@ -3483,7 +4037,7 @@ export default function ChatMain() {
                             size="sm"
                             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                           >
-                            {showEmojiPicker ? "Hide" : "Choose Emoji"}
+                            {showEmojiPicker ? t('settings.hideEmoji') : t('settings.chooseEmoji')}
                           </Button>
                           {editEmoji && (
                             <Button
@@ -3492,7 +4046,7 @@ export default function ChatMain() {
                               size="sm"
                               onClick={() => setEditEmoji("")}
                             >
-                              Clear
+                              {t('settings.clear')}
                             </Button>
                           )}
                         </div>
@@ -3519,15 +4073,64 @@ export default function ChatMain() {
                         )}
                       </div>
                     </div>
-                    
-                    {/* Notifications Settings */}
-                    <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                      <Label>Notifications</Label>
-                      <div className="mt-2 space-y-2">
+                    </TabsContent>
+
+                    <TabsContent value="appearance" className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                      <div className="flex items-center justify-between p-3 border rounded-lg dark:border-gray-700">
+                        <div className="flex items-center gap-2">
+                          {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
+                          <span className="text-sm">{t('settings.theme')}</span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={toggleTheme}
+                        >
+                          {theme === 'dark' ? t('settings.lightMode') : t('settings.darkMode')}
+                        </Button>
+                      </div>
+
+                      {/* Blur Effects Strength */}
+                      <div className="p-3 border rounded-lg dark:border-gray-700 space-y-3">
+                        <div className="flex flex-col">
+                          <Label htmlFor="blurStrength">{t('settings.blurStrength')}</Label>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {t('settings.blurDesc')}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Input
+                            id="blurStrength"
+                            type="range"
+                            min="0"
+                            max="50"
+                            step="1"
+                            value={blurStrength}
+                            onChange={(e) => setBlurStrength(parseInt(e.target.value))}
+                            className="flex-1"
+                          />
+                          <div className="flex items-center gap-2 min-w-[80px]">
+                            <Input
+                              type="number"
+                              min="0"
+                              max="50"
+                              value={blurStrength}
+                              onChange={(e) => setBlurStrength(Math.max(0, Math.min(50, parseInt(e.target.value) || 0)))}
+                              className="w-16 text-center"
+                            />
+                            <span className="text-sm text-gray-600 dark:text-gray-400">px</span>
+                          </div>
+                        </div>
+                      </div>
+                    </TabsContent>
+
+                    <TabsContent value="notifications" className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                      <div className="space-y-2">
                         <div className="flex items-center justify-between p-3 border rounded-lg dark:border-gray-700">
                           <div className="flex items-center gap-2">
                             <Bell className="size-4 text-gray-500" />
-                            <span className="text-sm">Browser Notifications</span>
+                            <span className="text-sm">{t('settings.browserNotifications')}</span>
                           </div>
                           <Button
                             type="button"
@@ -3538,74 +4141,114 @@ export default function ChatMain() {
                                 requestNotificationPermission();
                               } else {
                                 setNotificationsEnabled(false);
-                                toast.info("Notifications disabled");
+                                toast.info(t('notif.notificationsDisabled'));
                               }
                             }}
                           >
-                            {notificationsEnabled ? "Enabled" : "Enable"}
+                            {notificationsEnabled ? t('settings.enabled') : t('settings.enable')}
                           </Button>
                         </div>
                         {notificationPermission === "denied" && (
                           <p className="text-xs text-red-500">
-                            Notifications are blocked. Please enable them in your browser settings.
+                            {t('notif.notificationsBlocked')}
                           </p>
                         )}
-                      </div>
-                    </div>
 
-                    {/* Blur Effects Strength */}
-                    <div className="p-3 border rounded-lg dark:border-gray-700 space-y-3">
-                      <div className="flex flex-col">
-                        <Label htmlFor="blurStrength">Blur Strength</Label>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Adjust glassmorphic blur effect (0 = disabled)
-                        </p>
+                        {/* Additional notification options when enabled */}
+                        {notificationsEnabled && (
+                          <div className="flex items-center justify-between p-3 border rounded-lg dark:border-gray-700">
+                            <div>
+                              <span className="text-sm">{t('settings.notifyWhenActive')}</span>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                {t('settings.notifyWhenActiveDesc')}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={showNotificationsWhenActive ? "default" : "outline"}
+                              onClick={() => {
+                                const newValue = !showNotificationsWhenActive;
+                                setShowNotificationsWhenActive(newValue);
+                                localStorage.setItem('showNotificationsWhenActive', String(newValue));
+                                toast.info(newValue ? t('notif.willNotifyActive') : t('notif.wontNotifyActive'));
+                              }}
+                            >
+                              {showNotificationsWhenActive ? t('settings.on') : t('settings.off')}
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-3">
-                        <Input
-                          id="blurStrength"
-                          type="range"
-                          min="0"
-                          max="50"
-                          step="1"
-                          value={blurStrength}
-                          onChange={(e) => setBlurStrength(parseInt(e.target.value))}
-                          className="flex-1"
-                        />
-                        <div className="flex items-center gap-2 min-w-[80px]">
+                    </TabsContent>
+
+                    <TabsContent value="extras" className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                      <div className="space-y-3">
+                        <div>
+                          <Label>{t('settings.language')}</Label>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant={language === 'en' ? 'default' : 'outline'}
+                              onClick={() => setLanguage('en')}
+                            >
+                              🇬🇧 English
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={language === 'ru' ? 'default' : 'outline'}
+                              onClick={() => setLanguage('ru')}
+                            >
+                              🇷🇺 Русский
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Best Language of the Month */}
+                        <BestLanguageOfMonth navigate={navigate} setSettingsOpen={setSettingsOpen} />
+
+                        {/* Saved Custom Languages */}
+                        <div className="pt-3 border-t dark:border-gray-700">
+                          <div className="flex items-center justify-between mb-2">
+                            <Label>{t('settings.savedLanguages')}</Label>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                navigate('/lang');
+                                setSettingsOpen(false);
+                              }}
+                            >
+                              <Globe className="size-4 mr-1" />
+                              {t('settings.createLanguage')}
+                            </Button>
+                          </div>
+                          <SavedLanguages />
+                        </div>
+
+                        {/* Gemini API Key */}
+                        <div className="pt-3 border-t dark:border-gray-700">
+                          <Label htmlFor="geminiApiKey">{t('settings.geminiApiKey')}</Label>
                           <Input
-                            type="number"
-                            min="0"
-                            max="50"
-                            value={blurStrength}
-                            onChange={(e) => setBlurStrength(Math.max(0, Math.min(50, parseInt(e.target.value) || 0)))}
-                            className="w-16 text-center"
+                            id="geminiApiKey"
+                            type="password"
+                            placeholder="Your personal Gemini API key"
+                            value={geminiApiKey}
+                            onChange={(e) => setGeminiApiKey(e.target.value)}
+                            className="mt-2"
                           />
-                          <span className="text-sm text-gray-600 dark:text-gray-400">px</span>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            {t('settings.geminiApiKeyDesc')}
+                          </p>
                         </div>
                       </div>
-                    </div>
+                    </TabsContent>
 
-                    {/* Gemini API Key */}
-                    <div>
-                      <Label htmlFor="geminiApiKey">Gemini API Key (Optional)</Label>
-                      <Input
-                        id="geminiApiKey"
-                        type="password"
-                        placeholder="Your personal Gemini API key"
-                        value={geminiApiKey}
-                        onChange={(e) => setGeminiApiKey(e.target.value)}
-                        className="mt-2"
-                      />
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Set your own Gemini API key to chat with AI. Leave empty to use the admin's global key.
-                      </p>
-                    </div>
-                  </div>
-                  <DialogFooter className="mt-4">
-                    <Button type="submit">Save Changes</Button>
-                  </DialogFooter>
-                </form>
+                    <DialogFooter className="mt-4">
+                      <Button type="submit">{t('settings.saveChanges')}</Button>
+                    </DialogFooter>
+                  </form>
+                </Tabs>
               </DialogContent>
             </Dialog>
 
@@ -3620,16 +4263,16 @@ export default function ChatMain() {
               <DialogTrigger asChild>
                 <Button variant="outline" className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800">
                   <Users className="size-5 mr-2" />
-                  Create Group
+                  {t('groups.createGroup')}
                 </Button>
               </DialogTrigger>
-              <DialogContent 
+              <DialogContent
                 className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
                 style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
               >
                 <DialogHeader>
-                  <DialogTitle className="dark:text-white">Create Group</DialogTitle>
-                  <DialogDescription>Create a new group chat</DialogDescription>
+                  <DialogTitle className="dark:text-white">{t('groups.createGroup')}</DialogTitle>
+                  <DialogDescription>{t('groups.createGroupDesc')}</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreateGroup}>
                   <div className="space-y-4">
@@ -3740,16 +4383,16 @@ export default function ChatMain() {
               <DialogTrigger asChild>
                 <Button variant="outline" className="w-full justify-start dark:border-gray-700 dark:hover:bg-gray-800">
                   <Hash className="size-5 mr-2" />
-                  Create Channel
+                  {t('channels.createChannel')}
                 </Button>
               </DialogTrigger>
-              <DialogContent 
+              <DialogContent
                 className={`${blurStrength > 0 ? 'bg-white/60 dark:bg-gray-900/60' : 'bg-white dark:bg-gray-900'}`}
                 style={blurStrength > 0 ? { backdropFilter: `blur(${blurStrength}px)` } : {}}
               >
                 <DialogHeader>
-                  <DialogTitle className="dark:text-white">Create Channel</DialogTitle>
-                  <DialogDescription>Create a new public channel</DialogDescription>
+                  <DialogTitle className="dark:text-white">{t('channels.createChannel')}</DialogTitle>
+                  <DialogDescription>{t('channels.createChannelDesc')}</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreateChannel}>
                   <div className="space-y-4">
@@ -3836,7 +4479,7 @@ export default function ChatMain() {
             {/* Logout Button */}
             <Button variant="outline" className="w-full justify-start text-red-600 dark:border-gray-700 dark:hover:bg-gray-800" onClick={handleLogout}>
               <LogOut className="size-5 mr-2" />
-              Logout
+              {t('settings.logout')}
             </Button>
           </div>
         </SheetContent>
@@ -3893,7 +4536,7 @@ export default function ChatMain() {
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-gray-400" />
         <Input
           type="text"
-          placeholder="Search users and channels..."
+          placeholder={t('friends.searchPlaceholder')}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -3947,7 +4590,7 @@ export default function ChatMain() {
         <DialogTrigger asChild>
           <Button className="w-full" variant="outline" onClick={() => setFriendRequestsOpen(true)}>
             <Bell className="size-4 mr-2" />
-            Friend Requests
+            {t('friends.friendRequests')}
             {friendRequests.length > 0 && (
               <Badge className="ml-auto" variant="destructive">
                 {friendRequests.length}
@@ -3957,15 +4600,15 @@ export default function ChatMain() {
         </DialogTrigger>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Friend Requests</DialogTitle>
+            <DialogTitle>{t('friends.friendRequests')}</DialogTitle>
             <DialogDescription>
-              {friendRequests.length === 0 ? "No pending requests" : `${friendRequests.length} pending request${friendRequests.length > 1 ? 's' : ''}`}
+              {friendRequests.length === 0 ? t('friends.noPendingRequests') : `${friendRequests.length} ${friendRequests.length > 1 ? t('friends.pendingRequests') : t('friends.pendingRequest')}`}
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-96">
             {friendRequests.length === 0 ? (
               <div className="text-center text-gray-500 py-8">
-                No friend requests
+                {t('friends.noFriendRequests')}
               </div>
             ) : (
               <div className="space-y-3">
@@ -4016,7 +4659,7 @@ export default function ChatMain() {
         whileTap={{ scale: 0.98 }}
         onClick={() => {
           setMessages([]);
-          setSelectedChat({ type: 'news', id: 'news', name: 'News Channel' });
+          setSelectedChat({ type: 'news', id: 'news', name: t('main.newsChannel') });
           // Clear unread messages for news
           setUnreadMessages(prev => {
             const newUnread = { ...prev };
@@ -4032,7 +4675,7 @@ export default function ChatMain() {
       >
         <div className="text-xl">📰</div>
         <div className="flex-1 text-left">
-          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">News Channel</div>
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">{t('main.newsChannel')}</div>
         </div>
         {unreadMessages['news'] > 0 && (
           <motion.div
@@ -4052,12 +4695,14 @@ export default function ChatMain() {
         whileHover={{ scale: 1.01, x: 2 }}
         whileTap={{ scale: 0.98 }}
         onClick={() => {
-          setSelectedChat({ type: 'ai', id: 'ai-assistant', name: 'AI Assistant' });
+          setSelectedChat({ type: 'ai', id: 'ai-assistant', name: t('main.aiAssistant') });
           // Show welcome message
           setMessages([{
             id: 'ai-welcome',
             senderId: 'ai-assistant',
-            content: 'Hello! I\'m your AI Assistant powered by Gemini 2.5 Flash. How can I help you today?',
+            content: language === 'ru'
+              ? 'Здравствуйте! Я ваш ИИ-помощник на базе Gemini 2.5 Flash. Чем могу помочь?'
+              : 'Hello! I\'m your AI Assistant powered by Gemini 2.5 Flash. How can I help you today?',
             timestamp: new Date().toISOString()
           }]);
         }}
@@ -4069,13 +4714,13 @@ export default function ChatMain() {
           <Sparkles className="size-4 text-white" />
         </div>
         <div className="flex-1 text-left">
-          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">AI Assistant</div>
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">{t('main.aiAssistant')}</div>
         </div>
       </motion.button>
 
       {friends.length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-8">
-          No friends yet. Add some friends to start chatting!
+          {t('main.noFriends')}
         </div>
       ) : (
         <div className="space-y-1">
@@ -4115,7 +4760,14 @@ export default function ChatMain() {
                       return badge ? <span className="flex-shrink-0">{badge}</span> : null;
                     })()}
                   </div>
-                  <div className="text-xs text-gray-500 truncate">@{friend.username}</div>
+                  <div className="text-xs text-gray-500 truncate">
+                    {(() => {
+                      const chatId = [userId, friend.id].sort().join(":");
+                      const chatKey = `friend-${chatId}`;
+                      const lastMsg = lastMessages[chatKey];
+                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                    })()}
+                  </div>
                 </div>
               </button>
               {(() => {
@@ -4141,15 +4793,18 @@ export default function ChatMain() {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     className="text-red-600"
-                    onClick={async (e) => {
+                    onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Remove ${friend.name} from your friends?`)) {
-                        await handleRemoveFriend(friend.id);
-                      }
+                      showConfirm(
+                        `${t('friends.removeFriend')} ${friend.name}?`,
+                        `${t('friends.confirmRemove')} ${friend.name}?`,
+                        () => handleRemoveFriend(friend.id),
+                        'destructive'
+                      );
                     }}
                   >
                     <Trash2 className="size-4 mr-2" />
-                    Remove Friend
+                    {t('friends.removeFriend')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -4161,11 +4816,11 @@ export default function ChatMain() {
 
       {/* Groups Section */}
       <div className="mt-4 mb-2 px-2">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Groups</h3>
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('main.groups')}</h3>
       </div>
       {channels.filter(c => c.id !== 'news' && c.type !== 'channel').length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-4 px-2">
-          No groups yet
+          {t('main.noGroups')}
         </div>
       ) : (
         <div className="space-y-1">
@@ -4197,7 +4852,13 @@ export default function ChatMain() {
                 </Avatar>
                 <div className="min-w-0 flex-1 text-left">
                   <span className="font-medium dark:text-white truncate block">{group.name}</span>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">{group.members?.length || 0} members</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">
+                    {(() => {
+                      const chatKey = `group-${group.id}`;
+                      const lastMsg = lastMessages[chatKey];
+                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                    })()}
+                  </span>
                 </div>
               </button>
               {(() => {
@@ -4229,7 +4890,7 @@ export default function ChatMain() {
                     }}
                   >
                     <Edit className="size-4 mr-2" />
-                    Edit Group
+                    {t('groups.editGroup')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={(e) => {
@@ -4238,20 +4899,23 @@ export default function ChatMain() {
                     }}
                   >
                     <UserPlus className="size-4 mr-2" />
-                    Add Members
+                    {t('groups.addMembers')}
                   </DropdownMenuItem>
                   {group.creatorId === userId && (
                     <DropdownMenuItem
                       className="text-red-600"
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete "${group.name}"? This will delete all messages.`)) {
-                          await handleDeleteGroup(group.id);
-                        }
+                        showConfirm(
+                          `${t('groups.deleteGroup')} "${group.name}"?`,
+                          t('groups.confirmDelete'),
+                          () => handleDeleteGroup(group.id),
+                          'destructive'
+                        );
                       }}
                     >
                       <Trash2 className="size-4 mr-2" />
-                      Delete Group
+                      {t('groups.deleteGroup')}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -4264,11 +4928,11 @@ export default function ChatMain() {
 
       {/* Channels Section */}
       <div className="mt-4 mb-2 px-2">
-        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Channels</h3>
+        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{t('main.channels')}</h3>
       </div>
       {channels.filter(c => c.type === 'channel').length === 0 ? (
         <div className="text-center text-gray-500 text-sm py-4 px-2">
-          No channels yet
+          {t('main.noChannels')}
         </div>
       ) : (
         <div className="space-y-1">
@@ -4302,7 +4966,13 @@ export default function ChatMain() {
                     <span className="font-medium dark:text-white truncate">{channel.name}</span>
                     {channel.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
                   </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">@{channel.username}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">
+                    {(() => {
+                      const chatKey = `channel-${channel.id}`;
+                      const lastMsg = lastMessages[chatKey];
+                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                    })()}
+                  </span>
                 </div>
               </button>
               {(() => {
@@ -4339,34 +5009,40 @@ export default function ChatMain() {
                         }}
                       >
                         <Edit className="size-4 mr-2" />
-                        Manage Channel
+                        {t('channels.manageChannel')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="text-red-600"
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`Delete "${channel.name}"? This will delete all messages.`)) {
-                            await handleDeleteChannel(channel.id);
-                          }
+                          showConfirm(
+                            `${t('channels.deleteChannel')} "${channel.name}"?`,
+                            t('channels.confirmDelete'),
+                            () => handleDeleteChannel(channel.id),
+                            'destructive'
+                          );
                         }}
                       >
                         <Trash2 className="size-4 mr-2" />
-                        Delete Channel
+                        {t('channels.deleteChannel')}
                       </DropdownMenuItem>
                     </>
                   )}
                   {channel.creatorId !== userId && (
                     <DropdownMenuItem
                       className="text-red-600"
-                      onClick={async (e) => {
+                      onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Leave "${channel.name}"?`)) {
-                          await handleLeaveChannel(channel.id);
-                        }
+                        showConfirm(
+                          `${t('channels.leaveChannel')} "${channel.name}"?`,
+                          t('channels.confirmLeave'),
+                          () => handleLeaveChannel(channel.id),
+                          'default'
+                        );
                       }}
                     >
                       <Trash2 className="size-4 mr-2" />
-                      Leave Channel
+                      {t('channels.leaveChannel')}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
@@ -4459,7 +5135,7 @@ export default function ChatMain() {
                     {selectedChat.type === 'friend' && renderTagBadge(selectedChat.friendData?.tag, isUserAdmin(selectedChat.friendData), selectedChat.friendData?.tagColor)}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400">
-                    {selectedChat.type === 'group' ? 'Group chat' : selectedChat.type === 'news' ? 'News Channel' : selectedChat.type === 'ai' ? 'Gemini 2.5 Flash' : selectedChat.type === 'channel' ? 'Channel' : 'Direct message'}
+                    {selectedChat.type === 'group' ? t('main.groupChat') : selectedChat.type === 'news' ? t('main.newsChannel') : selectedChat.type === 'ai' ? 'Gemini 2.5 Flash' : selectedChat.type === 'channel' ? t('main.channel') : t('main.directMessage')}
                   </div>
                 </div>
               </div>
@@ -4505,7 +5181,7 @@ export default function ChatMain() {
                         className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                       >
                         {message.poll ? (
-                          <div className="max-w-full md:max-w-2xl w-full">
+                          <div className="w-[85%] max-w-[85%] sm:w-full sm:max-w-2xl">
                             <PollMessage
                               poll={message.poll}
                               pollId={message.id}
@@ -4570,6 +5246,13 @@ export default function ChatMain() {
                               setMessageText(content);
                             }}
                             onDelete={handleDeleteMessage}
+                            isRead={(() => {
+                              // Only show read status for DM (friend) chats
+                              if (selectedChat.type !== 'friend' || !isOwn) return false;
+                              // Check if the other user (not sender) has read this message
+                              const readBy = message.readBy || [];
+                              return readBy.some(id => id !== message.senderId);
+                            })()}
                           />
                         )}
                       </motion.div>
@@ -4577,6 +5260,25 @@ export default function ChatMain() {
                   })}
                 </AnimatePresence>
                 <div ref={messagesEndRef} />
+
+                {/* Read/Sent indicator for DMs */}
+                {selectedChat.type === 'friend' && messages.length > 0 && (() => {
+                  // Get the last message sent by current user
+                  const myMessages = messages.filter(m => m.senderId === userId);
+                  if (myMessages.length === 0) return null;
+
+                  const lastMyMessage = myMessages[myMessages.length - 1];
+                  const readBy = lastMyMessage.readBy || [];
+                  const isRead = readBy.some(id => id !== userId);
+
+                  return (
+                    <div className="text-center py-3">
+                      <span className="text-base font-semibold text-gray-600 dark:text-gray-300">
+                        {isRead ? t('message.read') : t('message.sent')}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             </ScrollArea>
 
@@ -4588,11 +5290,11 @@ export default function ChatMain() {
               {/* Hide input for news channel if not admin */}
               {selectedChat.type === 'news' && currentUser?.email !== 'mikhail02323@gmail.com' ? (
                 <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2">
-                  📰 News channel is read-only
+                  {t('message.newsReadOnly')}
                 </div>
               ) : selectedChat.type === 'channel' && !selectedChat.admins?.includes(userId || '') ? (
                 <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-2">
-                  🔒 Only channel admins can post messages
+                  {t('message.channelAdminOnly')}
                 </div>
               ) : (
                 <MessageInput
@@ -4618,8 +5320,8 @@ export default function ChatMain() {
           <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-950">
             <div className="text-center text-gray-500 dark:text-gray-400 px-4">
               <MessageCircle className="size-16 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
-              <p className="text-lg font-medium">Select a chat to start messaging</p>
-              <p className="text-sm mt-2">Choose a friend or group from the sidebar</p>
+              <p className="text-lg font-medium">{t('main.selectChat')}</p>
+              <p className="text-sm mt-2">{t('main.selectChatDesc')}</p>
             </div>
           </div>
         )}
@@ -4686,11 +5388,14 @@ export default function ChatMain() {
                           size="sm"
                           variant="destructive"
                           className="flex-1"
-                          onClick={async () => {
-                            if (confirm(`Delete user ${user.name}?`)) {
-                              try {
-                                const response = await fetch(
-                                  `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}`,
+                          onClick={() => {
+                            showConfirm(
+                              `Delete user ${user.name}?`,
+                              `Are you sure you want to permanently delete this user?`,
+                              async () => {
+                                try {
+                                  const response = await fetch(
+                                    `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}`,
                                   {
                                     method: "DELETE",
                                     headers: {
@@ -4711,8 +5416,10 @@ export default function ChatMain() {
                                 console.error("Delete user error:", error);
                                 toast.error("Failed to delete user");
                               }
-                            }
-                          }}
+                            },
+                            'destructive'
+                          );
+                        }}
                         >
                           Delete User
                         </Button>
@@ -4744,8 +5451,11 @@ export default function ChatMain() {
                         size="sm"
                         variant="secondary"
                         className="w-full"
-                        onClick={async () => {
-                          if (confirm(`Mark ${user.name}'s password as compromised?`)) {
+                        onClick={() => {
+                          showConfirm(
+                            `Mark password as compromised?`,
+                            `Mark ${user.name}'s password as compromised?`,
+                            async () => {
                             try {
                               const response = await fetch(
                                 `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}/mark-compromised`,
@@ -4768,8 +5478,10 @@ export default function ChatMain() {
                               console.error("Mark password compromised error:", error);
                               toast.error("Failed to mark password as compromised");
                             }
-                          }
-                        }}
+                          },
+                          'default'
+                        );
+                      }}
                       >
                         Mark Password as Compromised
                       </Button>
@@ -4814,8 +5526,11 @@ export default function ChatMain() {
                         size="sm"
                         variant="destructive"
                         className="w-full bg-red-600 hover:bg-red-700"
-                        onClick={async () => {
-                          if (confirm(`Mark ${user.name} as SCAM? This will set their tag to "SCAM" with a red background.`)) {
+                        onClick={() => {
+                          showConfirm(
+                            `Mark as SCAM?`,
+                            `Mark ${user.name} as SCAM? This will set their tag to "SCAM" with a red background.`,
+                            async () => {
                             try {
                               const response = await fetch(
                                 `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}/mark-scam`,
@@ -4839,8 +5554,10 @@ export default function ChatMain() {
                               console.error("Mark as scam error:", error);
                               toast.error("Failed to mark as scam");
                             }
-                          }
-                        }}
+                          },
+                          'destructive'
+                        );
+                      }}
                       >
                         ⚠️ Mark as SCAM
                       </Button>
@@ -4850,8 +5567,11 @@ export default function ChatMain() {
                         size="sm"
                         variant="outline"
                         className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600"
-                        onClick={async () => {
-                          if (confirm(`Remove SCAM tag from ${user.name}? This will clear their tag.`)) {
+                        onClick={() => {
+                          showConfirm(
+                            `Remove SCAM tag?`,
+                            `Remove SCAM tag from ${user.name}? This will clear their tag.`,
+                            async () => {
                             try {
                               const response = await fetch(
                                 `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}/remove-scam`,
@@ -4875,8 +5595,10 @@ export default function ChatMain() {
                               console.error("Remove SCAM tag error:", error);
                               toast.error("Failed to remove SCAM tag");
                             }
-                          }
-                        }}
+                          },
+                          'default'
+                        );
+                      }}
                       >
                         ✓ Remove SCAM Tag
                       </Button>
@@ -5259,10 +5981,11 @@ export default function ChatMain() {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={async () => {
-                          if (!confirm(`Are you sure you want to delete ${selectedChannelsForDelete.length} channels? This cannot be undone.`)) {
-                            return;
-                          }
+                        onClick={() => {
+                          showConfirm(
+                            `Delete ${selectedChannelsForDelete.length} channels?`,
+                            `Are you sure you want to delete ${selectedChannelsForDelete.length} channels? This cannot be undone.`,
+                            async () => {
 
                           try {
                             let successCount = 0;
@@ -5306,7 +6029,10 @@ export default function ChatMain() {
                             console.error("Bulk delete error:", error);
                             toast.error("Failed to delete channels");
                           }
-                        }}
+                        },
+                        'destructive'
+                      );
+                    }}
                       >
                         Delete Selected ({selectedChannelsForDelete.length})
                       </Button>
@@ -5365,11 +6091,13 @@ export default function ChatMain() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={async () => {
-                              if (!confirm(`Delete channel "${channel.name}"?`)) return;
-
-                              try {
-                                const response = await fetch(
+                            onClick={() => {
+                              showConfirm(
+                                `Delete "${channel.name}"?`,
+                                `Are you sure you want to delete this channel?`,
+                                async () => {
+                                  try {
+                                    const response = await fetch(
                                   `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/channels/${channel.id}`,
                                   {
                                     method: "DELETE",
@@ -5392,7 +6120,10 @@ export default function ChatMain() {
                                 console.error("Delete channel error:", error);
                                 toast.error("Failed to delete channel");
                               }
-                            }}
+                            },
+                            'destructive'
+                          );
+                        }}
                           >
                             <Trash2 className="size-4 text-red-500" />
                           </Button>
@@ -5615,8 +6346,11 @@ export default function ChatMain() {
                   size="sm"
                   variant="secondary"
                   className="w-full"
-                  onClick={async () => {
-                    if (confirm(`Mark ${selectedUserForMod.name}'s password as compromised?`)) {
+                  onClick={() => {
+                    showConfirm(
+                      `Mark password as compromised?`,
+                      `Mark ${selectedUserForMod.name}'s password as compromised?`,
+                      async () => {
                       try {
                         const response = await fetch(
                           `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/password-compromised`,
@@ -5640,8 +6374,10 @@ export default function ChatMain() {
                         console.error("Mark password compromised error:", error);
                         toast.error("Failed to mark password as compromised");
                       }
-                    }
-                  }}
+                    },
+                    'default'
+                  );
+                }}
                 >
                   Mark Password as Compromised
                 </Button>
@@ -5651,8 +6387,11 @@ export default function ChatMain() {
                     size="sm"
                     variant="destructive"
                     className="w-full bg-red-600 hover:bg-red-700"
-                    onClick={async () => {
-                      if (confirm(`Mark ${selectedUserForMod.name} as SCAM?`)) {
+                    onClick={() => {
+                      showConfirm(
+                        `Mark as SCAM?`,
+                        `Mark ${selectedUserForMod.name} as SCAM?`,
+                        async () => {
                         try {
                           const response = await fetch(
                             `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/tag`,
@@ -5677,8 +6416,10 @@ export default function ChatMain() {
                           console.error("Mark as scam error:", error);
                           toast.error("Failed to mark as scam");
                         }
-                      }
-                    }}
+                      },
+                      'destructive'
+                    );
+                  }}
                   >
                     ⚠️ Mark as SCAM
                   </Button>
@@ -5687,8 +6428,11 @@ export default function ChatMain() {
                     size="sm"
                     variant="outline"
                     className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600"
-                    onClick={async () => {
-                      if (confirm(`Remove SCAM tag from ${selectedUserForMod.name}?`)) {
+                    onClick={() => {
+                      showConfirm(
+                        `Remove SCAM tag?`,
+                        `Remove SCAM tag from ${selectedUserForMod.name}?`,
+                        async () => {
                         try {
                           const response = await fetch(
                             `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${selectedUserForMod.id}/tag`,
@@ -5713,8 +6457,10 @@ export default function ChatMain() {
                           console.error("Remove SCAM tag error:", error);
                           toast.error("Failed to remove SCAM tag");
                         }
-                      }
-                    }}
+                      },
+                      'default'
+                    );
+                  }}
                   >
                     ✓ Remove SCAM Tag
                   </Button>
@@ -5833,7 +6579,7 @@ export default function ChatMain() {
               <Button type="button" variant="outline" onClick={() => setEditingGroup(null)}>
                 Cancel
               </Button>
-              <Button type="submit">Save Changes</Button>
+              <Button type="submit">{t('settings.saveChanges')}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -6050,7 +6796,7 @@ export default function ChatMain() {
               <Button type="button" variant="outline" onClick={() => setEditingChannel(null)}>
                 Cancel
               </Button>
-              <Button type="submit">Save Changes</Button>
+              <Button type="submit">{t('settings.saveChanges')}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -6304,6 +7050,18 @@ export default function ChatMain() {
           allUsers={allUsers}
         />
       )}
+
+      {/* Global Confirm Dialog */}
+      <CustomConfirm
+        open={confirmDialogOpen}
+        onClose={() => setConfirmDialogOpen(false)}
+        onConfirm={confirmDialogConfig.onConfirm}
+        title={confirmDialogConfig.title}
+        description={confirmDialogConfig.description}
+        confirmText={t('common.delete')}
+        cancelText={t('common.cancel')}
+        variant={confirmDialogConfig.variant}
+      />
     </div>
   );
 }

@@ -460,13 +460,13 @@ app.get(`/${SERVER_ID}/users/by-username/:username`, async (c) => {
 app.post(`/${SERVER_ID}/user/activity`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
-    
+
     if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
 
     const user = await withRetry(() => kv.get(`user:${userId}`));
-    
+
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
@@ -477,6 +477,89 @@ app.post(`/${SERVER_ID}/user/activity`, async (c) => {
     return c.json({ success: true });
   } catch (error: any) {
     return c.json({ error: error.message || 'Failed to update activity' }, 500);
+  }
+});
+
+// Mark message as read
+app.post(`/${SERVER_ID}/messages/:messageId/read`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const messageId = c.req.param('messageId');
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+
+    const messageIndex = messages.findIndex((m: any) => m.id === messageId);
+    if (messageIndex === -1) {
+      return c.json({ error: 'Message not found' }, 404);
+    }
+
+    // Initialize readBy array if not exists
+    if (!messages[messageIndex].readBy) {
+      messages[messageIndex].readBy = [];
+    }
+
+    // Add userId to readBy if not already there
+    if (!messages[messageIndex].readBy.includes(userId)) {
+      messages[messageIndex].readBy.push(userId);
+      await kv.set(messageKey, messages);
+    }
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to mark message as read' }, 500);
+  }
+});
+
+// Mark all messages in chat as read
+app.post(`/${SERVER_ID}/messages/read-all`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { chatId, chatType } = body;
+
+    if (!chatId || !chatType) {
+      return c.json({ error: 'chatId and chatType are required' }, 400);
+    }
+
+    const messageKey = `messages:${chatType}:${chatId}`;
+    const messages = await kv.get(messageKey) || [];
+
+    // Mark all messages as read by this user
+    let updated = false;
+    messages.forEach((message: any) => {
+      if (!message.readBy) {
+        message.readBy = [];
+      }
+      if (!message.readBy.includes(userId) && message.senderId !== userId) {
+        message.readBy.push(userId);
+        updated = true;
+      }
+    });
+
+    if (updated) {
+      await kv.set(messageKey, messages);
+    }
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to mark messages as read' }, 500);
   }
 });
 
@@ -2443,11 +2526,30 @@ app.post(`/${SERVER_ID}/admin/channels/:id/verify`, async (c) => {
   }
 });
 
+// Public: Get global Gemini API key (accessible to all users)
+app.get(`/${SERVER_ID}/settings/gemini-api-key`, async (c) => {
+  try {
+    const userId = getUserIdFromRequest(c);
+
+    if (!userId) {
+      return c.json({ error: 'No user ID provided' }, 401);
+    }
+
+    // Get settings from KV store
+    const settings = await kv.get('system:settings') || {};
+    const geminiApiKey = settings.geminiApiKey || '';
+
+    return c.json({ geminiApiKey });
+  } catch (error: any) {
+    return c.json({ error: 'Failed to get global API key' }, 500);
+  }
+});
+
 // Admin: Get settings
 app.get(`/${SERVER_ID}/admin/settings`, async (c) => {
   try {
     const userId = getUserIdFromRequest(c);
-    
+
     if (!userId) {
       return c.json({ error: 'No user ID provided' }, 401);
     }
@@ -3083,6 +3185,67 @@ app.get(`/${SERVER_ID}/troll/active`, async (c) => {
   }
 });
 
+// KV Store Routes (for custom languages and other key-value data)
+app.get(`/${SERVER_ID}/kv/:key`, async (c) => {
+  try {
+    const key = c.req.param('key');
+    const value = await kv.get(key);
+
+    if (value === null) {
+      return c.json({ error: 'Key not found' }, 404);
+    }
+
+    return c.json({ key, value });
+  } catch (error: any) {
+    console.error('KV get error:', error);
+    return c.json({ error: 'Failed to get value' }, 500);
+  }
+});
+
+app.put(`/${SERVER_ID}/kv/:key`, async (c) => {
+  try {
+    const key = c.req.param('key');
+    const body = await c.req.json();
+    const { value } = body;
+
+    console.log('[KV PUT] Saving key:', key);
+    console.log('[KV PUT] Value:', JSON.stringify(value));
+
+    await kv.set(key, value);
+
+    return c.json({ success: true, key });
+  } catch (error: any) {
+    console.error('KV set error:', error);
+    return c.json({ error: 'Failed to set value' }, 500);
+  }
+});
+
+app.delete(`/${SERVER_ID}/kv/:key`, async (c) => {
+  try {
+    const key = c.req.param('key');
+    await kv.del(key);
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('KV delete error:', error);
+    return c.json({ error: 'Failed to delete value' }, 500);
+  }
+});
+
+app.get(`/${SERVER_ID}/kv/prefix/:prefix`, async (c) => {
+  try {
+    const prefix = c.req.param('prefix');
+    console.log('[KV PREFIX] Querying with prefix:', prefix);
+    const values = await kv.getByPrefixWithKeys(prefix);
+    console.log('[KV PREFIX] Raw result:', JSON.stringify(values));
+
+    return c.json({ values });
+  } catch (error: any) {
+    console.error('KV getByPrefix error:', error);
+    return c.json({ error: 'Failed to get values by prefix' }, 500);
+  }
+});
+
 // Catch-all route for debugging
 app.all('*', (c) => {
   console.log('⛔ [CATCH-ALL] ===== UNMATCHED ROUTE =====');
@@ -3093,9 +3256,9 @@ app.all('*', (c) => {
   console.log('⛔ [CATCH-ALL] X-User-Id:', c.req.header('X-User-Id'));
   console.log('⛔ [CATCH-ALL] This means the route was not matched by any handler!');
   console.log('⛔ [CATCH-ALL] Expected SERVER_ID:', SERVER_ID);
-  return c.json({ 
-    error: 'Route not found', 
-    path: c.req.path, 
+  return c.json({
+    error: 'Route not found',
+    path: c.req.path,
     method: c.req.method,
     expectedPrefix: `/${SERVER_ID}/`,
     hint: 'Make sure the path starts with the correct SERVER_ID prefix'

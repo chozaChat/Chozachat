@@ -177,7 +177,7 @@ export function PollMessage({ poll, pollId, votes, currentUserId, onVote, onRetr
     : true;
 
   return (
-    <div className="space-y-3 p-3 md:p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 min-w-0 overflow-hidden">
+    <div className="space-y-3 p-3 md:p-4 rounded-lg bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 min-w-0 max-w-full overflow-hidden">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">

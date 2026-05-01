@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Reply, Pencil, Trash2, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface Message {
   id: string;
@@ -34,6 +35,7 @@ interface MessageItemProps {
   onReply: (message: Message) => void;
   onEdit: (message: Message, content: string) => void;
   onDelete: (messageId: string) => void;
+  isRead?: boolean; // Whether the message has been read by recipient(s)
 }
 
 export function MessageItem({
@@ -51,9 +53,11 @@ export function MessageItem({
   renderTagBadge,
   onReply,
   onEdit,
-  onDelete
+  onDelete,
+  isRead = false
 }: MessageItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { t } = useLanguage();
   const messageContent = message.content || message.text || '';
   
   // Check if message is only a sticker (single emoji)
@@ -106,28 +110,34 @@ export function MessageItem({
         </motion.div>
       ) : (
         // Regular message with bubble
-        <div className={`max-w-[90%] sm:max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'} relative group`}>
-          {!isOwn && (chatType === 'group' || chatType === 'news' || chatType === 'ai') && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
+        <div className={`flex gap-2 items-end ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+          {/* Profile emoji avatar for group/channel/news messages */}
+          {!isOwn && (chatType === 'group' || chatType === 'news' || chatType === 'channel') && (
+            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 flex items-center justify-center text-lg shadow-sm">
               {isAI ? (
-                <>
-                  <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
-                    <Sparkles className="size-2.5 text-white" />
-                  </div>
-                  <span className="font-semibold">AI Assistant</span>
-                </>
+                <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
+                  <Sparkles className="size-4 text-white" />
+                </div>
               ) : (
-                <>
-                  {getSenderEmoji(message.senderId) && (
-                    <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
-                  )}
-                  <span key="name">{getSenderName(message.senderId)}</span>
-                  {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
-                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
-                </>
+                <span>{getSenderEmoji(message.senderId) || '👤'}</span>
               )}
             </div>
           )}
+
+          <div className={`max-w-[90%] sm:max-w-[85%] md:max-w-md ${isOwn ? 'order-2' : 'order-1'} relative group`}>
+            {!isOwn && (chatType === 'group' || chatType === 'news' || chatType === 'channel' || chatType === 'ai') && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-1 px-3 flex-wrap">
+                {isAI ? (
+                  <span className="font-semibold">AI Assistant</span>
+                ) : (
+                  <>
+                    <span key="name">{getSenderName(message.senderId)}</span>
+                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
+                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
+                  </>
+                )}
+              </div>
+            )}
           <motion.div
             whileHover={{ scale: 1.02 }}
             onClick={() => !isAI && setMenuOpen(!menuOpen)}
@@ -216,12 +226,13 @@ export function MessageItem({
             </motion.div>
           )}
           
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3">
-            {new Date(message.timestamp).toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit' 
+          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 px-3 flex items-center gap-1.5">
+            {new Date(message.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
             })}
-            {message.edited && <span className="ml-1 italic opacity-75">(edited)</span>}
+            {message.edited && <span className="ml-1 italic opacity-75">({t('message.edited')})</span>}
+          </div>
           </div>
         </div>
       )}
