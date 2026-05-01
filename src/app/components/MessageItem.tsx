@@ -1,8 +1,9 @@
 import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Reply, Pencil, Trash2, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useNavigate } from 'react-router';
 
 interface Message {
   id: string;
@@ -57,16 +58,46 @@ export function MessageItem({
   isRead = false
 }: MessageItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [stickerMenuOpen, setStickerMenuOpen] = useState(false);
+  const stickerMenuRef = useRef<HTMLDivElement>(null);
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const messageContent = message.content || message.text || '';
-  
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (stickerMenuRef.current && !stickerMenuRef.current.contains(event.target as Node)) {
+        setStickerMenuOpen(false);
+      }
+    };
+
+    if (stickerMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [stickerMenuOpen]);
+
   // Check if message is only a sticker (single emoji)
   const isOnlySticker = (text: string) => {
     const emojiRegex = /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)$/u;
     return emojiRegex.test(text.trim());
   };
-  
+
+  // Check if message is an image URL
+  const isImageUrl = (text: string) => {
+    try {
+      const url = new URL(text.trim());
+      return /\.(png|jpg|jpeg|gif|webp)$/i.test(url.pathname) || url.hostname.includes('tenor.com') || url.hostname.includes('giphy.com');
+    } catch {
+      return false;
+    }
+  };
+
   const isStickerMessage = isOnlySticker(messageContent);
+  const isImageMessage = isImageUrl(messageContent);
 
   return (
     <>
@@ -89,11 +120,11 @@ export function MessageItem({
               ) : (
                 <>
                   {getSenderEmoji(message.senderId) && (
-                    <span key="emoji" className="text-sm">{getSenderEmoji(message.senderId)}</span>
+                    <span className="text-sm">{getSenderEmoji(message.senderId)}</span>
                   )}
-                  <span key="name">{getSenderName(message.senderId)}</span>
-                  {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
-                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
+                  <span>{getSenderName(message.senderId)}</span>
+                  {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
+                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
                 </>
               )}
             </div>
@@ -102,9 +133,81 @@ export function MessageItem({
             {messageContent}
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400">
-            {new Date(message.timestamp).toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit' 
+            {new Date(message.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </div>
+        </motion.div>
+      ) : isImageMessage ? (
+        // Image/GIF message
+        <motion.div
+          className="flex flex-col items-center gap-1"
+          whileHover={{ scale: 1.02 }}
+          transition={{ type: "spring", stiffness: 300 }}
+        >
+          {!isOwn && (chatType === 'group' || chatType === 'news' || chatType === 'ai') && (
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+              {isAI ? (
+                <>
+                  <div className="flex items-center justify-center w-4 h-4 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full">
+                    <Sparkles className="size-2.5 text-white" />
+                  </div>
+                  <span className="font-semibold">AI Assistant</span>
+                </>
+              ) : (
+                <>
+                  {getSenderEmoji(message.senderId) && (
+                    <span className="text-sm">{getSenderEmoji(message.senderId)}</span>
+                  )}
+                  <span>{getSenderName(message.senderId)}</span>
+                  {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
+                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
+                </>
+              )}
+            </div>
+          )}
+          <div className="relative">
+            <div
+              className="rounded-lg overflow-hidden max-w-xs sm:max-w-sm cursor-pointer"
+              onClick={() => setStickerMenuOpen(!stickerMenuOpen)}
+            >
+              <img
+                src={messageContent}
+                alt="Sticker"
+                className="w-full h-auto"
+                loading="lazy"
+              />
+            </div>
+
+            {stickerMenuOpen && (
+              <motion.div
+                ref={stickerMenuRef}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-1 z-10 min-w-[150px]"
+              >
+                {isOwn && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      onDelete(message.id);
+                      setStickerMenuOpen(false);
+                    }}
+                    className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    {t('sticker.delete')}
+                  </Button>
+                )}
+              </motion.div>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            {new Date(message.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
             })}
           </div>
         </motion.div>
@@ -131,9 +234,9 @@ export function MessageItem({
                   <span className="font-semibold">AI Assistant</span>
                 ) : (
                   <>
-                    <span key="name">{getSenderName(message.senderId)}</span>
-                    {getSenderIsVerified(message.senderId) && <span key="verified">{renderVerifiedBadge()}</span>}
-                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId)) && <span key="tag">{renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}</span>}
+                    <span>{getSenderName(message.senderId)}</span>
+                    {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
+                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
                   </>
                 )}
               </div>

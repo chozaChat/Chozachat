@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Reply, Pencil, X, Smile, Send, Paperclip } from 'lucide-react';
+import { Reply, Pencil, X, Smile, Send, Paperclip, Film } from 'lucide-react';
 import { RefObject } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -24,6 +24,7 @@ interface MessageInputProps {
   onSubmit: (e: React.FormEvent) => void;
   onEdit: () => void;
   onStickerClick: () => void;
+  onGifClick?: () => void;
   onAttachClick?: () => void;
   getSenderName: (id: string) => string;
   messageInputRef: RefObject<HTMLInputElement>;
@@ -41,6 +42,7 @@ export function MessageInput({
   onSubmit,
   onEdit,
   onStickerClick,
+  onGifClick,
   onAttachClick,
   getSenderName,
   messageInputRef,
@@ -128,6 +130,19 @@ export function MessageInput({
             <Smile className="size-5" />
           </Button>
         </motion.div>
+        {onGifClick && (
+          <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={onGifClick}
+              className="hover:bg-gradient-to-br hover:from-purple-100 hover:to-pink-100 dark:hover:from-purple-900/40 dark:hover:to-pink-900/40 transition-all"
+            >
+              <Film className="size-5" />
+            </Button>
+          </motion.div>
+        )}
         <Input
           ref={messageInputRef}
           type="text"

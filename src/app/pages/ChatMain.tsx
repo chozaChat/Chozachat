@@ -21,6 +21,7 @@ import { useBlur } from "../contexts/BlurContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import { CustomPrompt, CustomConfirm } from "../components/CustomPrompt";
 import { StickerPicker } from "../components/StickerPicker";
+import { GifPicker } from "../components/GifPicker";
 import { MessageItem } from "../components/MessageItem";
 import { MessageInput } from "../components/MessageInput";
 import { PollCreator, PollData } from "../components/PollCreator";
@@ -392,7 +393,10 @@ export default function ChatMain() {
   
   // Sticker picker
   const [stickerPickerOpen, setStickerPickerOpen] = useState(false);
-  
+
+  // GIF picker
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
+
   // Message actions (edit, reply, delete)
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
@@ -680,7 +684,7 @@ export default function ChatMain() {
     const loadInitialData = async () => {
       const startTime = Date.now();
       const maxLoadTime = 3000; // 3 seconds max
-      
+
       // Load all data in parallel
       await Promise.all([
         loadCurrentUser(),
@@ -691,11 +695,14 @@ export default function ChatMain() {
         updateLastActive(),
         loadAllUsers()
       ]);
-      
+
+      // Load last messages for all chats after friends and channels are loaded
+      await loadAllLastMessages();
+
       // Calculate remaining time to reach minimum of 3 seconds if needed
       const elapsed = Date.now() - startTime;
       const remainingTime = Math.max(0, Math.min(500, maxLoadTime - elapsed));
-      
+
       // Wait for remaining time then hide loading screen
       setTimeout(() => {
         setInitialLoading(false);
@@ -1679,6 +1686,110 @@ export default function ChatMain() {
       }
     } catch (error) {
       console.error("Failed to connect to Chozachat Framework Serives: ConnectEID", error);
+    }
+  };
+
+  const loadAllLastMessages = async () => {
+    if (!userId) return;
+
+    try {
+      const lastMessagesData: Record<string, { content: string, timestamp: string }> = {};
+
+      // Fetch friends list directly
+      const friendsResponse = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/friends`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId
+          },
+        }
+      );
+
+      const friendsData = friendsResponse.ok ? await friendsResponse.json() : { friends: [] };
+      const friendsList = friendsData.friends || [];
+
+      // Fetch channels list directly
+      const channelsResponse = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/channels`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId
+          },
+        }
+      );
+
+      const channelsData = channelsResponse.ok ? await channelsResponse.json() : { channels: [] };
+      const channelsList = channelsData.channels || [];
+
+      // Load last messages for all friends
+      const friendPromises = friendsList.map(async (friend: any) => {
+        try {
+          const chatId = [userId, friend.id].sort().join(":");
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${chatId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId
+              },
+            }
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.messages && data.messages.length > 0) {
+              const lastMsg = data.messages[data.messages.length - 1];
+              const chatKey = `friend-${chatId}`;
+              lastMessagesData[chatKey] = {
+                content: lastMsg.content || lastMsg.text || '',
+                timestamp: lastMsg.timestamp
+              };
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to load last message for friend ${friend.id}:`, error);
+        }
+      });
+
+      // Load last messages for all channels (groups and channels)
+      const channelPromises = channelsList.map(async (channel: any) => {
+        try {
+          const response = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages/${channel.id}`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+                'X-User-Id': userId
+              },
+            }
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.messages && data.messages.length > 0) {
+              const lastMsg = data.messages[data.messages.length - 1];
+              const chatKey = `${channel.type}-${channel.id}`;
+              lastMessagesData[chatKey] = {
+                content: lastMsg.content || lastMsg.text || '',
+                timestamp: lastMsg.timestamp
+              };
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to load last message for channel ${channel.id}:`, error);
+        }
+      });
+
+      // Wait for all promises to complete
+      await Promise.all([...friendPromises, ...channelPromises]);
+
+      // Update state with all last messages
+      setLastMessages(lastMessagesData);
+      console.log(`✅ Loaded last messages for ${Object.keys(lastMessagesData).length} chats`);
+    } catch (error) {
+      console.error("Failed to load all last messages:", error);
     }
   };
 
@@ -3501,6 +3612,37 @@ export default function ChatMain() {
     return user?.verified;
   };
 
+  const formatLastMessage = (content: string): string => {
+    if (!content) return '';
+
+    const trimmed = content.trim();
+
+    // Check if it's an image URL
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const url = new URL(trimmed);
+        const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(url.pathname);
+        const isGif = url.hostname.includes('tenor.com') || url.hostname.includes('giphy.com') || /\.gif$/i.test(url.pathname);
+
+        if (isGif) {
+          return '🎬 GIF';
+        } else if (isImage) {
+          return '📷 Sticker';
+        }
+      } catch (e) {
+        // Invalid URL, treat as text
+      }
+    }
+
+    // Check if it's a single emoji
+    const emojiRegex = /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)$/u;
+    if (emojiRegex.test(trimmed)) {
+      return content; // Return the emoji as-is
+    }
+
+    return content; // Return regular text
+  };
+
   const toggleFriendForGroup = (friendId: string) => {
     setSelectedFriendsForGroup(prev =>
       prev.includes(friendId)
@@ -4765,7 +4907,7 @@ export default function ChatMain() {
                       const chatId = [userId, friend.id].sort().join(":");
                       const chatKey = `friend-${chatId}`;
                       const lastMsg = lastMessages[chatKey];
-                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                      return lastMsg ? formatLastMessage(lastMsg.content) : t('message.noMessages');
                     })()}
                   </div>
                 </div>
@@ -4856,7 +4998,7 @@ export default function ChatMain() {
                     {(() => {
                       const chatKey = `group-${group.id}`;
                       const lastMsg = lastMessages[chatKey];
-                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                      return lastMsg ? formatLastMessage(lastMsg.content) : t('message.noMessages');
                     })()}
                   </span>
                 </div>
@@ -4970,7 +5112,7 @@ export default function ChatMain() {
                     {(() => {
                       const chatKey = `channel-${channel.id}`;
                       const lastMsg = lastMessages[chatKey];
-                      return lastMsg ? lastMsg.content : t('message.noMessages');
+                      return lastMsg ? formatLastMessage(lastMsg.content) : t('message.noMessages');
                     })()}
                   </span>
                 </div>
@@ -5308,6 +5450,7 @@ export default function ChatMain() {
                   onSubmit={handleSendMessage}
                   onEdit={handleEditMessage}
                   onStickerClick={() => setStickerPickerOpen(true)}
+                  onGifClick={() => setGifPickerOpen(true)}
                   onAttachClick={() => setPollCreatorOpen(true)}
                   getSenderName={getSenderName}
                   messageInputRef={messageInputRef}
@@ -6972,6 +7115,96 @@ export default function ChatMain() {
           } catch (error) {
             console.error("Send sticker error:", error);
             toast.error("Failed to send sticker");
+          }
+        }}
+      />
+
+      {/* GIF Picker */}
+      <GifPicker
+        open={gifPickerOpen}
+        onClose={() => setGifPickerOpen(false)}
+        onSelectGif={async (gifUrl) => {
+          // Send GIF immediately
+          if (!selectedChat) return;
+
+          try {
+            // If it's news channel, use news endpoint (admin only)
+            if (selectedChat.type === 'news') {
+              if (currentUser?.email !== 'mikhail02323@gmail.com') {
+                toast.error("Only admin can post to news channel");
+                return;
+              }
+
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/news`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${publicAnonKey}`,
+                    'X-User-Id': userId || '',
+                  },
+                  body: JSON.stringify({ content: gifUrl }),
+                }
+              );
+
+              if (!response.ok) {
+                const data = await response.json();
+                toast.error(data.error || "Failed to send GIF");
+                return;
+              }
+
+              loadMessages('news', 'news');
+
+              // Broadcast new news message via Realtime
+              if (messageChannelRef.current) {
+                await messageChannelRef.current.send({
+                  type: 'broadcast',
+                  event: 'new-message',
+                  payload: { chatType: 'news', chatId: 'news' }
+                });
+              }
+
+              return;
+            }
+
+            // Regular message
+            const response = await fetch(
+              `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/messages`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${publicAnonKey}`,
+                  'X-User-Id': userId || '',
+                },
+                body: JSON.stringify({
+                  chatId: selectedChat.id,
+                  content: gifUrl,
+                  chatType: selectedChat.type,
+                }),
+              }
+            );
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+              toast.error(errorData.error || "Failed to send GIF");
+              return;
+            }
+
+            loadMessages(selectedChat.type, selectedChat.id);
+
+            // Broadcast new message via Realtime
+            if (messageChannelRef.current) {
+              await messageChannelRef.current.send({
+                type: 'broadcast',
+                event: 'new-message',
+                payload: { chatType: selectedChat.type, chatId: selectedChat.id }
+              });
+            }
+          } catch (error) {
+            console.error("Send GIF error:", error);
+            toast.error("Failed to send GIF");
           }
         }}
       />

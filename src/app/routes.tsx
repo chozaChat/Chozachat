@@ -9,6 +9,8 @@ import InviteGroup from "./pages/InviteGroup";
 import InviteChannel from "./pages/InviteChannel";
 import CustomLanguageEditor from "./pages/CustomLanguageEditor";
 import SetLanguage from "./pages/SetLanguage";
+import ViewStickerPack from "./pages/ViewStickerPack";
+import StickerPack from "./pages/StickerPack";
 import NotFound from "./pages/NotFound";
 
 export const router = createHashRouter([
@@ -26,6 +28,8 @@ export const router = createHashRouter([
       { path: "u/:username", element: <InviteUser /> },
       { path: "g/:groupname", element: <InviteGroup /> },
       { path: "c/:channelname", element: <InviteChannel /> },
+      { path: "stickers/:packName/manage", element: <StickerPack /> },
+      { path: "stickers/:packName", element: <ViewStickerPack /> },
       { path: "*", element: <NotFound /> },
     ],
   },

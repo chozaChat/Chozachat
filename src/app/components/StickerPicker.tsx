@@ -1,14 +1,36 @@
-import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import React, { useState, useEffect } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { motion } from 'motion/react';
+import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { Plus } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { useLanguage } from '../contexts/LanguageContext';
+
+const SERVER_ID = 'make-server-a1c86d03';
 
 interface StickerPickerProps {
   open: boolean;
   onClose: () => void;
   onSelectSticker: (sticker: string) => void;
+}
+
+interface Sticker {
+  id: string;
+  imageUrl: string;
+  sourceUrl?: string;
+  cropData?: {
+    x: number;
+    y: number;
+    size: number;
+  };
+}
+
+interface StickerPack {
+  name: string;
+  stickers: Sticker[];
 }
 
 // Emoji with searchable keywords
@@ -588,8 +610,49 @@ const STICKER_CATEGORIES: Record<string, EmojiData[]> = {
 };
 
 export function StickerPicker({ open, onClose, onSelectSticker }: StickerPickerProps) {
+  const navigate = useNavigate();
+  const { t } = useLanguage();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Emotions');
+  const [stickerPacks, setStickerPacks] = useState<Record<string, StickerPack>>({});
+  const [viewMode, setViewMode] = useState<'emojis' | 'custom'>('emojis');
+  const [creatingPack, setCreatingPack] = useState(false);
+  const [newPackName, setNewPackName] = useState('');
+
+  useEffect(() => {
+    if (open && viewMode === 'custom') {
+      loadStickerPacks();
+    }
+  }, [open, viewMode]);
+
+  const loadStickerPacks = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/prefix/sticker-pack-`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const packs: Record<string, StickerPack> = {};
+
+        for (const item of (data.values || [])) {
+          if (item && item.key && item.value) {
+            const packName = item.key.replace('sticker-pack-', '');
+            packs[packName] = item.value;
+          }
+        }
+
+        setStickerPacks(packs);
+      }
+    } catch (error) {
+      console.error("Failed to load sticker packs:", error);
+    }
+  };
 
   const handleSelectSticker = (sticker: string) => {
     onSelectSticker(sticker);
@@ -607,52 +670,168 @@ export function StickerPicker({ open, onClose, onSelectSticker }: StickerPickerP
           <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Choose a Sticker 🎨
           </DialogTitle>
+          <DialogDescription>
+            Select an emoji or create a custom sticker pack
+          </DialogDescription>
         </DialogHeader>
-        
+
         <div className="space-y-4">
-          <Input
-            placeholder="Search stickers... 🔍"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full border-2 border-blue-200 dark:border-blue-800 focus:border-blue-500 dark:focus:border-blue-600 transition-colors"
-          />
-
-          {!searchQuery && (
-            <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
-              <TabsList className="w-full flex-wrap h-auto bg-blue-100 dark:bg-gray-800">
-                {Object.keys(STICKER_CATEGORIES).map((category) => (
-                  <TabsTrigger 
-                    key={category} 
-                    value={category} 
-                    className="flex-1 min-w-[100px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white transition-all"
-                  >
-                    {category}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          )}
-
-          <div className="grid grid-cols-8 sm:grid-cols-10 md:grid-cols-12 gap-2 sm:gap-3 max-h-[450px] overflow-y-auto p-2 sm:p-3 rounded-lg bg-white/50 dark:bg-gray-900/50">
-            {filteredStickers.map((sticker, index) => (
-              <motion.div
-                key={`${sticker.emoji}-${index}`}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: index * 0.01, duration: 0.2 }}
-                whileHover={{ scale: 1.2, rotate: [0, -5, 5, 0] }}
-                whileTap={{ scale: 0.9 }}
-              >
-                <Button
-                  variant="ghost"
-                  className="h-10 w-10 sm:h-12 sm:w-12 md:h-14 md:w-14 text-2xl sm:text-3xl md:text-4xl hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-xl sm:rounded-2xl transition-all shadow-sm hover:shadow-lg p-0"
-                  onClick={() => handleSelectSticker(sticker.emoji)}
-                >
-                  {sticker.emoji}
-                </Button>
-              </motion.div>
-            ))}
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setViewMode('emojis')}
+              className={`flex-1 ${viewMode === 'emojis' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+            >
+              Emojis
+            </Button>
+            <Button
+              onClick={() => setViewMode('custom')}
+              className={`flex-1 ${viewMode === 'custom' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
+            >
+              Custom Stickers
+            </Button>
           </div>
+
+          {viewMode === 'emojis' ? (
+            <>
+              <Input
+                placeholder="Search emojis... 🔍"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full border-2 border-blue-200 dark:border-blue-800 focus:border-blue-500 dark:focus:border-blue-600 transition-colors"
+              />
+
+              {!searchQuery && (
+                <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <TabsList className="w-full flex-wrap h-auto bg-blue-100 dark:bg-gray-800">
+                    {Object.keys(STICKER_CATEGORIES).map((category) => (
+                      <TabsTrigger
+                        key={category}
+                        value={category}
+                        className="flex-1 min-w-[100px] data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white transition-all"
+                      >
+                        {category}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              )}
+
+              <div className="grid grid-cols-8 sm:grid-cols-10 md:grid-cols-12 gap-2 sm:gap-3 max-h-[450px] overflow-y-auto p-2 sm:p-3 rounded-lg bg-white/50 dark:bg-gray-900/50">
+                {filteredStickers.map((sticker, index) => (
+                  <motion.div
+                    key={`${sticker.emoji}-${index}`}
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: index * 0.01, duration: 0.2 }}
+                    whileHover={{ scale: 1.2, rotate: [0, -5, 5, 0] }}
+                    whileTap={{ scale: 0.9 }}
+                  >
+                    <Button
+                      variant="ghost"
+                      className="h-10 w-10 sm:h-12 sm:w-12 md:h-14 md:w-14 text-2xl sm:text-3xl md:text-4xl hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-xl sm:rounded-2xl transition-all shadow-sm hover:shadow-lg p-0"
+                      onClick={() => handleSelectSticker(sticker.emoji)}
+                    >
+                      {sticker.emoji}
+                    </Button>
+                  </motion.div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="space-y-4">
+              {creatingPack ? (
+                <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg space-y-3">
+                  <h3 className="font-bold dark:text-white">Create New Pack</h3>
+                  <Input
+                    placeholder="my-stickers"
+                    value={newPackName}
+                    onChange={(e) => setNewPackName(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Use lowercase letters, numbers, and hyphens only
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => {
+                        setCreatingPack(false);
+                        setNewPackName('');
+                      }}
+                      className="flex-1 bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-white"
+                    >
+                      {t('common.cancel')}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const sanitized = newPackName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                        if (!sanitized) {
+                          alert(t('sticker.enterPackName'));
+                          return;
+                        }
+                        onClose();
+                        navigate(`/stickers/${sanitized}/manage`);
+                      }}
+                      disabled={!newPackName.trim()}
+                      className="flex-1 bg-green-600 text-white"
+                    >
+                      {t('sticker.create')}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  onClick={() => setCreatingPack(true)}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-500 to-blue-500 text-white"
+                >
+                  <Plus className="size-4" />
+                  Create New Sticker Pack
+                </Button>
+              )}
+
+              <div className="max-h-[450px] overflow-y-auto space-y-4 p-2">
+                {Object.keys(stickerPacks).length === 0 ? (
+                  <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+                    No custom sticker packs yet. Create one to get started!
+                  </div>
+                ) : (
+                  Object.entries(stickerPacks).map(([packName, pack]) => (
+                    <div key={packName} className="bg-white dark:bg-gray-800 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-bold text-lg dark:text-white">{pack.name}</h3>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            onClose();
+                            navigate(`/stickers/${packName}`);
+                          }}
+                        >
+                          {t('sticker.viewPack')}
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-6 gap-2">
+                        {pack.stickers.map((sticker) => (
+                          <motion.button
+                            key={sticker.id}
+                            onClick={() => handleSelectSticker(sticker.imageUrl)}
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                            className="aspect-square bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden hover:ring-2 hover:ring-blue-500"
+                          >
+                            <img
+                              src={sticker.imageUrl}
+                              alt="Sticker"
+                              className="w-full h-full object-cover"
+                            />
+                          </motion.button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
