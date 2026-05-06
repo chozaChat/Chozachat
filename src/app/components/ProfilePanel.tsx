@@ -7,12 +7,10 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { ScrollArea } from "./ui/scroll-area";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { toast } from "sonner";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { pb, getUser } from "../../lib/pocketbase";
 import EmojiPicker from "emoji-picker-react";
 import { useBlur } from "../contexts/BlurContext";
 import { useLanguage } from "../contexts/LanguageContext";
-
-const SERVER_ID = "make-server-a1c86d03";
 
 interface User {
   id: string;
@@ -69,20 +67,12 @@ export function ProfilePanel({ type, data, currentUserId, onClose, onUpdate, onR
 
     try {
       const memberPromises = data.members.map(async (memberId: string) => {
-        const response = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/users/${memberId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${publicAnonKey}`,
-              "X-User-Id": currentUserId,
-            },
-          }
-        );
-        if (response.ok) {
-          const userData = await response.json();
-          return userData.user;
+        try {
+          const user = await pb.collection('users').getOne(memberId);
+          return user;
+        } catch {
+          return null;
         }
-        return null;
       });
 
       const memberData = await Promise.all(memberPromises);

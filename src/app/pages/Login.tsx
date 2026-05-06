@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { supabase } from "../../lib/supabase";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { pb, login } from "../../lib/pocketbase";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -24,7 +23,6 @@ export default function Login() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
-  const SERVER_ID = 'make-server-a1c86d03';
 
   // Generate floating emojis once using useMemo
   const floatingEmojis = useMemo(() => {
@@ -47,13 +45,11 @@ export default function Login() {
     const checkSession = () => {
       try {
         console.log("Checking for existing session...");
-        
-        // Check for custom auth session in localStorage
-        const accessToken = localStorage.getItem("accessToken");
-        const userId = localStorage.getItem("userId");
-        
-        if (accessToken && userId) {
-          console.log("Active session found in localStorage! Redirecting to chat...");
+
+        // Check PocketBase auth
+        if (pb.authStore.isValid && pb.authStore.model) {
+          console.log("Active PocketBase session found! Redirecting to chat...");
+          localStorage.setItem("userId", pb.authStore.model.id);
           navigate("/chat");
         } else {
           console.log("No active session found");
@@ -64,7 +60,7 @@ export default function Login() {
         setCheckingSession(false);
       }
     };
-    
+
     checkSession();
   }, [navigate]);
 
@@ -74,81 +70,38 @@ export default function Login() {
 
     try {
       console.log("Attempting to login with identifier:", identifier);
-      
-      // Call the login endpoint directly
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/login`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({ 
-            email: identifier, // Can be username or email
-            password 
-          }),
+
+      // Login with PocketBase
+      const authData = await login(identifier, password);
+
+      console.log("Login successful - User ID:", authData.record.id);
+
+      // Store user ID in localStorage for compatibility
+      localStorage.setItem("userId", authData.record.id);
+
+      // Check if password is compromised
+      try {
+        const user = await pb.collection('users').getOne(authData.record.id);
+
+        if (user.passwordCompromised) {
+          console.log("Password is marked as compromised");
+          setCurrentUserId(authData.record.id);
+          setPasswordCompromised(true);
+          setChangePasswordOpen(true);
+          toast.warning("Your password has been flagged as compromised. Please change it.");
+          setLoading(false);
+          return; // Don't navigate to chat yet
         }
-      );
-
-      const data = await response.json();
-      console.log("Login response:", { status: response.status, data });
-
-      if (!response.ok) {
-        console.error("Login failed:", data.error);
-        toast.error(`Login failed: ${data.error || 'Unknown error'}`);
-        setLoading(false);
-        return;
+      } catch (err) {
+        console.error("Failed to check password status:", err);
+        // Continue to chat even if check fails
       }
 
-      if (data.success && data.accessToken && data.userId) {
-        // Store session
-        console.log("Login successful - Session data:");
-        console.log("Access token (first 50 chars):", data.accessToken.substring(0, 50));
-        console.log("User ID:", data.userId);
-        
-        localStorage.setItem("accessToken", data.accessToken);
-        localStorage.setItem("userId", data.userId);
-        
-        // Verify storage
-        console.log("Stored in localStorage:");
-        console.log("Access token:", localStorage.getItem("accessToken")?.substring(0, 50));
-        console.log("User ID:", localStorage.getItem("userId"));
-        
-        // Check if password is compromised
-        try {
-          const userResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${data.userId}`,
-            {
-              headers: {
-                Authorization: `Bearer ${publicAnonKey}`,
-              },
-            }
-          );
-          
-          if (userResponse.ok) {
-            const userData = await userResponse.json();
-            if (userData.user?.passwordCompromised) {
-              console.log("Password is marked as compromised");
-              setCurrentUserId(data.userId);
-              setPasswordCompromised(true);
-              setChangePasswordOpen(true);
-              toast.warning("Your password has been flagged as compromised. Please change it.");
-              setLoading(false);
-              return; // Don't navigate to chat yet
-            }
-          }
-        } catch (err) {
-          console.error("Failed to check password status:", err);
-          // Continue to chat even if check fails
-        }
-        
-        toast.success("Login successful!");
-        navigate("/chat");
-      }
-    } catch (error) {
+      toast.success("Login successful!");
+      navigate("/chat");
+    } catch (error: any) {
       console.error("Login error:", error);
-      toast.error("Login failed. Please try again.");
+      toast.error(error?.message || "Login failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -156,7 +109,7 @@ export default function Login() {
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (newPassword !== confirmNewPassword) {
       toast.error("Passwords don't match");
       return;
@@ -169,58 +122,25 @@ export default function Login() {
 
     try {
       setLoading(true);
-      
-      // Update password with Supabase
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
-      });
 
-      if (error) {
-        toast.error("Failed to change password: " + error.message);
+      if (!currentUserId) {
+        toast.error("User ID not found");
         return;
       }
 
-      // Clear compromised flag in our KV store
-      if (currentUserId) {
-        const userResponse = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${currentUserId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${publicAnonKey}`,
-            },
-          }
-        );
-        
-        if (userResponse.ok) {
-          const userData = await userResponse.json();
-          const updatedUser = {
-            ...userData.user,
-            passwordCompromised: false
-          };
-          
-          await fetch(
-            `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/set`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${publicAnonKey}`,
-              },
-              body: JSON.stringify({
-                key: `user:${currentUserId}`,
-                value: updatedUser
-              }),
-            }
-          );
-        }
-      }
+      // Update password and clear compromised flag with PocketBase
+      await pb.collection('users').update(currentUserId, {
+        password: newPassword,
+        passwordConfirm: newPassword,
+        passwordCompromised: false
+      });
 
       toast.success("Password changed successfully!");
       setChangePasswordOpen(false);
       navigate("/chat");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Change password error:", error);
-      toast.error("Failed to change password");
+      toast.error(error?.message || "Failed to change password");
     } finally {
       setLoading(false);
     }

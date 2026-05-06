@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { supabase } from "../../lib/supabase";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-import { pb } from "../../lib/pocketbase";
+import { pb, getCurrentUser, kvGet as pbKvGet, kvSet as pbKvSet, kvDelete as pbKvDelete } from "../../lib/pocketbase";
 import { compressImage, getLimits, getSubscriptionTier } from "../../lib/imageCompression";
 import { Button } from "../components/ui/button";
 import confetti from "canvas-confetti";
@@ -35,7 +33,7 @@ import { processFastCommand } from "../utils/fastCommands";
 import { Bot } from "../types/bot";
 import { executeBotForMessage } from "../utils/botEngine";
 
-const SERVER_ID = 'make-server-a1c86d03';
+// Removed SERVER_ID - no longer needed with PocketBase
 
 function BestLanguageOfMonth({ navigate, setSettingsOpen }: { navigate: any; setSettingsOpen: (open: boolean) => void }) {
   const [bestLang, setBestLang] = useState<{ key: string; displayName: string } | null>(null);
@@ -47,20 +45,9 @@ function BestLanguageOfMonth({ navigate, setSettingsOpen }: { navigate: any; set
 
   const loadBestLanguage = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/best-language-of-month`,
-        {
-          headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.value) {
-          setBestLang(data.value);
-        }
+      const value = await pbKvGet('best-language-of-month');
+      if (value) {
+        setBestLang(value);
       }
     } catch (error) {
       console.error("Failed to load best language:", error);
@@ -470,7 +457,7 @@ export default function ChatMain() {
   const CLIENT_ONLY_MODE = false;
   
   // SERVER ID
-  const SERVER_ID = 'make-server-a1c86d03';
+  // Removed SERVER_ID - no longer needed with PocketBase
   
   // FRONTEND VERSION FOR DEBUGGING
   const FRONTEND_VERSION = '2024-04-08-v33-POLL-MANAGEMENT';
@@ -571,22 +558,10 @@ export default function ChatMain() {
     );
   };
   
-  // Direct KV store access (simulated with fetch to server, but without auth)
+  // Direct KV store access using PocketBase
   const kvGet = async (key: string) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/${key}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        return data.value;
-      }
-      return null;
+      return await pbKvGet(key);
     } catch (error) {
       console.error('KV get error:', error);
       return null;
@@ -595,19 +570,11 @@ export default function ChatMain() {
 
   const kvGetByPrefix = async (prefix: string) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/prefix/${prefix}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        return data.values || [];
-      }
-      return [];
+      // Get all kv_store records and filter by prefix
+      const records = await pb.collection('kv_store').getFullList({
+        filter: `key ~ "${prefix}%"`,
+      });
+      return records.map(r => ({ key: r.key, value: r.value }));
     } catch (error) {
       console.error('KV getByPrefix error:', error);
       return [];
@@ -616,18 +583,8 @@ export default function ChatMain() {
 
   const kvSet = async (key: string, value: any) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/${key}`,
-        {
-          method: 'PUT',
-          headers: { 
-            Authorization: `Bearer ${publicAnonKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ value }),
-        }
-      );
-      return response.ok;
+      await pbKvSet(key, value);
+      return true;
     } catch (error) {
       console.error('KV set error:', error);
       return false;
@@ -636,16 +593,8 @@ export default function ChatMain() {
 
   const kvDel = async (key: string) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/${key}`,
-        {
-          method: 'DELETE',
-          headers: { 
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      return response.ok;
+      await pbKvDelete(key);
+      return true;
     } catch (error) {
       console.error('KV del error:', error);
       return false;

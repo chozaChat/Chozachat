@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { supabase } from "../../lib/supabase";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { pb, register } from "../../lib/pocketbase";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -39,11 +38,9 @@ export default function Signup() {
 
   // Check for existing session on mount - redirect if already logged in
   useEffect(() => {
-    const checkSession = async () => {
+    const checkSession = () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.user) {
+        if (pb.authStore.isValid && pb.authStore.model) {
           console.log("User already logged in, redirecting to chat...");
           navigate("/chat");
         }
@@ -51,51 +48,35 @@ export default function Signup() {
         console.error("Session check error:", error);
       }
     };
-    
+
     checkSession();
   }, [navigate]);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validate password confirmation
     if (password !== confirmPassword) {
       toast.error("Passwords do not match!");
       return;
     }
-    
+
     if (password.length < 6) {
       toast.error("Password must be at least 6 characters long!");
       return;
     }
-    
+
     setLoading(true);
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-a1c86d03/signup`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({ email, password, name, username }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        toast.error(`Signup failed: ${data.error}`);
-        return;
-      }
+      // Register with PocketBase
+      await register(email, password, name, username);
 
       toast.success("Account created successfully! Please sign in.");
       navigate("/");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Signup error:", error);
-      toast.error("Signup failed. Please try again.");
+      toast.error(error?.message || "Signup failed. Please try again.");
     } finally {
       setLoading(false);
     }
