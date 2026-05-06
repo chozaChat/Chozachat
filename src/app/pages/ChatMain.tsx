@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { supabase } from "../../lib/supabase";
 import { projectId, publicAnonKey } from "/utils/supabase/info";
+import { pb } from "../../lib/pocketbase";
+import { compressImage, getLimits, getSubscriptionTier } from "../../lib/imageCompression";
 import { Button } from "../components/ui/button";
 import confetti from "canvas-confetti";
 import { Input } from "../components/ui/input";
@@ -14,7 +16,7 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
 import { ProfilePanel } from "../components/ProfilePanel";
-import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot, Sparkles, Reply, Pencil, Globe, User, Palette } from "lucide-react";
+import { MessageCircle, Users, UserPlus, LogOut, Send, Plus, UserMinus, Check, X, Bell, ArrowLeft, Settings, Shield, Newspaper, MoreVertical, Edit, Trash, Trash2, Moon, Sun, Menu, Search, Hash, Smile, Bot as BotIcon, Sparkles, Reply, Pencil, Globe, User, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 import { useBlur } from "../contexts/BlurContext";
@@ -27,7 +29,11 @@ import { MessageInput } from "../components/MessageInput";
 import { PollCreator, PollData } from "../components/PollCreator";
 import { PollMessage } from "../components/PollMessage";
 import { AnnouncementBanner } from "../components/AnnouncementBanner";
+import { CommandMessage } from "../components/CommandMessage";
 import { motion, AnimatePresence } from "motion/react";
+import { processFastCommand } from "../utils/fastCommands";
+import { Bot } from "../types/bot";
+import { executeBotForMessage } from "../utils/botEngine";
 
 const SERVER_ID = 'make-server-a1c86d03';
 
@@ -223,6 +229,14 @@ interface User {
   lastActive?: string;
   tags?: string[];
   emoji?: string;
+  coins?: number;
+  trialUsed?: boolean;
+  subscription?: {
+    tier: 'boost' | 'ultra' | null;
+    expiresAt: string;
+    customGradient?: string;
+    tagGradient?: string;
+  };
 }
 
 interface Friend extends User {}
@@ -339,6 +353,9 @@ export default function ChatMain() {
   const [showEditChannelEmojiPicker, setShowEditChannelEmojiPicker] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
+  const [selectedSubTier, setSelectedSubTier] = useState<'boost' | 'ultra' | null>(null);
+  const [coinsToAdd, setCoinsToAdd] = useState("");
   const [selectedUserForAdmin, setSelectedUserForAdmin] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [friendRequestsOpen, setFriendRequestsOpen] = useState(false);
@@ -375,6 +392,7 @@ export default function ChatMain() {
   const globalNotificationChannelRef = useRef<any>(null);
   const [chatMembersData, setChatMembersData] = useState<Record<string, User>>({});
   const [lastMessages, setLastMessages] = useState<Record<string, { content: string, timestamp: string }>>({});
+  const [bots, setBots] = useState<Bot[]>([]);
 
   // Custom prompts
   const [promptOpen, setPromptOpen] = useState(false);
@@ -474,16 +492,51 @@ export default function ChatMain() {
   };
 
   // Helper function to render tag badge
-  const renderTagBadge = (tag?: string, isAdmin?: boolean, tagColor?: string) => {
+  const renderTagBadge = (tag?: string, isAdmin?: boolean, tagColor?: string, subscription?: { tier: 'boost' | 'ultra' | null, tagGradient?: string, customGradient?: string, expiresAt?: string }) => {
     if (!tag) return null;
-    
+
     const isScam = tag === 'SCAM';
     const isMod = tag === 'MOD';
-    
+
+    // Check if subscription is active
+    const hasActiveSubscription = subscription?.tier && subscription?.expiresAt && new Date(subscription.expiresAt) > new Date();
+
+    // Ultra: custom tag color picker + custom tag gradient
+    if (hasActiveSubscription && subscription.tier === 'ultra' && !isScam && !isAdmin) {
+      const gradient = subscription.customGradient || subscription.tagGradient || 'linear-gradient(to right, #ec4899, #a855f7, #3b82f6)';
+      return (
+        <span
+          className="text-xs px-2 py-0.5 rounded font-semibold text-white"
+          style={{
+            background: gradient,
+            backgroundClip: 'padding-box'
+          }}
+        >
+          {tag}
+        </span>
+      );
+    }
+
+    // Boost: tag gradient
+    if (hasActiveSubscription && subscription.tier === 'boost' && !isScam && !isAdmin) {
+      const gradient = subscription.tagGradient || 'linear-gradient(to right, #a855f7, #ec4899)';
+      return (
+        <span
+          className="text-xs px-2 py-0.5 rounded font-semibold text-white"
+          style={{
+            background: gradient,
+            backgroundClip: 'padding-box'
+          }}
+        >
+          {tag}
+        </span>
+      );
+    }
+
     // Use custom tagColor if provided, otherwise fall back to defaults
     if (tagColor && !isScam && !isAdmin) {
       return (
-        <span 
+        <span
           className="text-xs px-2 py-0.5 rounded font-semibold text-white"
           style={{ backgroundColor: tagColor }}
         >
@@ -491,12 +544,12 @@ export default function ChatMain() {
         </span>
       );
     }
-    
+
     return (
-      <span 
+      <span
         className={`text-xs px-2 py-0.5 rounded font-semibold ${
-          isScam 
-            ? 'bg-red-500 dark:bg-red-800 text-white' 
+          isScam
+            ? 'bg-red-500 dark:bg-red-800 text-white'
             : isAdmin
             ? 'bg-blue-500 dark:bg-blue-800 text-white'
             : isMod
@@ -693,7 +746,8 @@ export default function ChatMain() {
         loadFriendRequests(),
         loadStats(),
         updateLastActive(),
-        loadAllUsers()
+        loadAllUsers(),
+        loadBots()
       ]);
 
       // Load last messages for all chats after friends and channels are loaded
@@ -1568,6 +1622,34 @@ export default function ChatMain() {
       }
     } catch (error) {
       console.error("Failed to connect to CFS, failed to load channels: ConnectEID ", error);
+    }
+  };
+
+  const loadBots = async () => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/prefix/bot-`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const loadedBots = (data.values || [])
+          .filter((v: any) => v && v.key && v.value)
+          .map((v: any) => ({
+            ...v.value,
+            id: v.key.replace('bot-', ''),
+          }))
+          .filter((bot: Bot) => bot.enabled);
+        setBots(loadedBots);
+        console.log('Loaded bots:', loadedBots.length);
+      }
+    } catch (error) {
+      console.error('Failed to load bots:', error);
     }
   };
 
@@ -2523,7 +2605,18 @@ export default function ChatMain() {
         // Backend returns { users, channels }
         // Filter out groups (type === 'group'), only show channels (type === 'channel')
         const filteredChannels = (data.channels || []).filter((ch: any) => ch.type === 'channel');
-        const results = [...(data.users || []), ...filteredChannels];
+
+        // Search through local bots
+        const matchingBots = bots.filter(bot =>
+          bot.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (bot.description || '').toLowerCase().includes(searchQuery.toLowerCase())
+        ).map(bot => ({
+          ...bot,
+          type: 'bot',
+          username: bot.name,
+        }));
+
+        const results = [...(data.users || []), ...filteredChannels, ...matchingBots];
         setSearchResults(results);
       } else {
         console.error("Search failed:", data);
@@ -2729,9 +2822,40 @@ export default function ChatMain() {
     e.preventDefault();
     if (!messageText.trim() || !selectedChat || !userId) return;
 
+    // Process fast commands
+    const commandResult = await processFastCommand(messageText, language, t);
+
+    if (commandResult.isCommand) {
+      const messageContent = commandResult.response || messageText;
+      const tempId = `temp-${Date.now()}`;
+
+      // Encode command metadata in content using special format
+      const encodedContent = `__COMMAND__${commandResult.type}__${commandResult.success}__${messageContent}`;
+
+      const optimisticMessage: Message = {
+        id: tempId,
+        senderId: userId,
+        content: encodedContent,
+        timestamp: new Date().toISOString(),
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          content: replyingTo.content || replyingTo.text || '',
+          senderName: getSenderName(replyingTo.senderId)
+        } : undefined
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+      setMessageText("");
+      setReplyingTo(null);
+
+      // Continue with normal message sending using the encoded content
+      await sendMessageToServer(encodedContent, optimisticMessage, tempId);
+      return;
+    }
+
     const messageContent = messageText;
     const tempId = `temp-${Date.now()}`;
-    
+
     // Optimistically add message to UI immediately
     const optimisticMessage: Message = {
       id: tempId,
@@ -2744,10 +2868,54 @@ export default function ChatMain() {
         senderName: getSenderName(replyingTo.senderId)
       } : undefined
     };
-    
+
     setMessages(prev => [...prev, optimisticMessage]);
     setMessageText("");
+
+    // Save reply context before clearing
+    const replyContext = replyingTo ? {
+      userId: replyingTo.senderId,
+      userName: getSenderName(replyingTo.senderId),
+      text: replyingTo.content || replyingTo.text || '',
+    } : undefined;
+
     setReplyingTo(null);
+
+    await sendMessageToServer(messageContent, optimisticMessage, tempId);
+
+    // Execute bots after sending message
+    if (bots.length > 0 && selectedChat) {
+      const isDM = selectedChat.type === 'friend';
+      const botResponses = await executeBotForMessage(
+        bots,
+        messageContent,
+        userId,
+        currentUser?.name || 'User',
+        selectedChat.id,
+        isDM,
+        replyContext
+      );
+
+      // Send bot responses as messages
+      for (const botResponse of botResponses) {
+        const botTempId = `bot-temp-${Date.now()}-${Math.random()}`;
+        const botMessage: Message = {
+          id: botTempId,
+          senderId: 'bot-system',
+          content: botResponse.text,
+          timestamp: new Date().toISOString(),
+        };
+
+        setMessages(prev => [...prev, botMessage]);
+
+        // Send bot message to server
+        await sendMessageToServer(botResponse.text, botMessage, botTempId);
+      }
+    }
+  };
+
+  const sendMessageToServer = async (messageContent: string, optimisticMessage: Message, tempId: string) => {
+    if (!selectedChat || !userId) return;
 
     try {
       // If it's AI chat, call Gemini API
@@ -3080,6 +3248,121 @@ export default function ChatMain() {
       // Remove optimistic message on error
       setMessages(prev => prev.filter(m => m.id !== tempId));
       setMessageText(messageContent);
+    }
+  };
+
+  const handleImageUpload = async (file: File) => {
+    if (!selectedChat || !userId || !currentUser) return;
+
+    try {
+      // Get subscription tier
+      const tier = currentUser.subscription?.tier || null;
+      const subscriptionTier = tier === 'boost' ? 'boost' : tier === 'ultra' ? 'ultra' : 'base';
+
+      // Import compression utilities
+      const { compressImage, getLimits } = await import('../../lib/imageCompression');
+      const limits = getLimits(subscriptionTier, 'messages');
+
+      // Validate file size
+      const maxUploadMB = limits.maxUploadSize;
+      if (file.size > maxUploadMB * 1024 * 1024) {
+        toast.error(`Image must be smaller than ${maxUploadMB}MB (${subscriptionTier} tier)`);
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error("Please upload an image file");
+        return;
+      }
+
+      toast.info("Compressing image...");
+
+      // Compress image based on subscription tier
+      const compressedBlob = await compressImage(file, limits.maxCompressedSize, 'messages');
+      const compressedFile = new File([compressedBlob], file.name, { type: 'image/jpeg' });
+
+      const tempId = `temp-${Date.now()}`;
+
+      // Create optimistic message with loading state
+      const optimisticMessage: Message = {
+        id: tempId,
+        senderId: userId,
+        content: '',
+        timestamp: new Date().toISOString(),
+        type: 'image',
+        imageUrl: URL.createObjectURL(compressedBlob), // Temporary preview
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          content: replyingTo.content || replyingTo.text || '',
+          senderName: getSenderName(replyingTo.senderId)
+        } : undefined
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+      const savedReplyingTo = replyingTo;
+      setReplyingTo(null);
+
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append('image', compressedFile);
+      formData.append('senderId', userId);
+      formData.append('channelId', selectedChat.id);
+      formData.append('type', 'image');
+      formData.append('timestamp', new Date().toISOString());
+
+      if (savedReplyingTo) {
+        formData.append('replyTo', savedReplyingTo.id);
+      }
+
+      // Upload to PocketBase
+      const record = await pb.collection('messages').create(formData);
+
+      // Replace temp message with real message from server
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId) {
+          return {
+            ...record,
+            imageUrl: pb.files.getUrl(record, record.image),
+            replyTo: m.replyTo
+          } as Message;
+        }
+        return m;
+      }));
+
+      // Update last message
+      const chatKey = `${selectedChat.type}-${selectedChat.id}`;
+      setLastMessages(prev => ({
+        ...prev,
+        [chatKey]: {
+          content: '📷 Image',
+          timestamp: new Date().toISOString()
+        }
+      }));
+
+      // Broadcast new message via Realtime
+      if (messageChannelRef.current) {
+        await messageChannelRef.current.send({
+          type: 'broadcast',
+          event: 'new-message',
+          payload: {
+            chatType: selectedChat.type,
+            chatId: selectedChat.id,
+            message: record,
+            senderId: userId,
+            text: '📷 Image'
+          }
+        });
+      }
+
+      const originalSizeKB = (file.size / 1024).toFixed(1);
+      const compressedSizeKB = (compressedFile.size / 1024).toFixed(1);
+      toast.success(`Image uploaded! ${originalSizeKB}KB → ${compressedSizeKB}KB`);
+    } catch (error) {
+      console.error("Image upload error:", error);
+      toast.error("Failed to upload image");
+      // Remove optimistic message on error
+      setMessages(prev => prev.filter(m => !m.id.startsWith('temp-')));
     }
   };
 
@@ -3432,17 +3715,102 @@ export default function ChatMain() {
     }
   };
 
+  const handleSubscribe = async (tier: 'boost' | 'ultra', isTrial: boolean = false) => {
+    if (!userId || !currentUser) return;
+
+    // Trial validation
+    if (isTrial) {
+      if (currentUser.trialUsed) {
+        toast.error("You've already used your free trial!");
+        return;
+      }
+      if (tier !== 'boost') {
+        toast.error("Trial is only available for ChozaBoost!");
+        return;
+      }
+    }
+
+    const cost = tier === 'boost' ? 10 : 15;
+    const userCoins = currentUser.coins || 0;
+
+    if (!isTrial && userCoins < cost) {
+      toast.error(`Not enough coins! You need ${cost} coins but have ${userCoins}.`);
+      return;
+    }
+
+    try {
+      // Calculate expiry date
+      const expiresAt = new Date();
+      if (isTrial) {
+        expiresAt.setDate(expiresAt.getDate() + 7); // 7 days for trial
+      } else {
+        expiresAt.setMonth(expiresAt.getMonth() + 1); // 1 month for paid
+      }
+
+      // Default gradients
+      const defaultBoostGradient = 'linear-gradient(to right, #a855f7, #ec4899)';
+      const defaultUltraGradient = 'linear-gradient(to right, #ec4899, #a855f7, #3b82f6)';
+
+      // Update user with new subscription and deducted coins
+      const updatedUser = {
+        ...currentUser,
+        coins: isTrial ? userCoins : userCoins - cost,
+        trialUsed: isTrial ? true : currentUser.trialUsed,
+        subscription: {
+          tier,
+          expiresAt: expiresAt.toISOString(),
+          tagGradient: tier === 'boost' ? defaultBoostGradient : defaultUltraGradient,
+          customGradient: tier === 'ultra' ? defaultUltraGradient : undefined
+        }
+      };
+
+      // Update in backend
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/set`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            key: `user:${userId}`,
+            value: updatedUser
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to update subscription");
+      }
+
+      // Update local state
+      setCurrentUser(updatedUser);
+
+      const tierName = tier === 'boost' ? 'ChozaBoost' : 'ChozaBoost Ultra';
+      if (isTrial) {
+        toast.success(`🎉 7-day free trial activated! Enjoy ${tierName} until ${expiresAt.toLocaleDateString()}`);
+      } else {
+        toast.success(`🎉 Subscribed to ${tierName}! Valid until ${expiresAt.toLocaleDateString()}`);
+      }
+      setSubscribeOpen(false);
+    } catch (error) {
+      console.error("Subscribe error:", error);
+      toast.error("Failed to subscribe. Please try again.");
+    }
+  };
+
   const handleLogout = async () => {
     console.log("Logging out...");
-    
+
     // Sign out from Supabase (clears session)
     await supabase.auth.signOut();
-    
+
     // Clear all localStorage
     localStorage.removeItem("accessToken");
     localStorage.removeItem("userId");
     localStorage.removeItem("refreshToken");
-    
+
     console.log("Logout complete, redirecting to login...");
     navigate("/");
   };
@@ -3592,6 +3960,29 @@ export default function ChatMain() {
     return user?.tagColor;
   };
 
+  const getSenderSubscription = (senderId: string) => {
+    if (senderId === userId) {
+      const sub = currentUser?.subscription;
+      if (sub && sub.tier && new Date(sub.expiresAt) > new Date()) {
+        return { tier: sub.tier, customGradient: sub.customGradient, tagGradient: sub.tagGradient, expiresAt: sub.expiresAt };
+      }
+      return null;
+    }
+    const friend = friends.find(f => f.id === senderId);
+    if (friend?.subscription && friend.subscription.tier && new Date(friend.subscription.expiresAt) > new Date()) {
+      return { tier: friend.subscription.tier, customGradient: friend.subscription.customGradient, tagGradient: friend.subscription.tagGradient, expiresAt: friend.subscription.expiresAt };
+    }
+    const chatMember = chatMembersData[senderId];
+    if (chatMember?.subscription && chatMember.subscription.tier && new Date(chatMember.subscription.expiresAt) > new Date()) {
+      return { tier: chatMember.subscription.tier, customGradient: chatMember.subscription.customGradient, tagGradient: chatMember.subscription.tagGradient, expiresAt: chatMember.subscription.expiresAt };
+    }
+    const user = allUsers.find(u => u.id === senderId);
+    if (user?.subscription && user.subscription.tier && new Date(user.subscription.expiresAt) > new Date()) {
+      return { tier: user.subscription.tier, customGradient: user.subscription.customGradient, tagGradient: user.subscription.tagGradient, expiresAt: user.subscription.expiresAt };
+    }
+    return null;
+  };
+
   const getSenderIsAdmin = (senderId: string) => {
     if (senderId === userId) return isUserAdmin(currentUser);
     const friend = friends.find(f => f.id === senderId);
@@ -3616,6 +4007,54 @@ export default function ChatMain() {
     if (!content) return '';
 
     const trimmed = content.trim();
+
+    // Check if it's a command message
+    if (trimmed.startsWith('__COMMAND__')) {
+      const parts = trimmed.split('__');
+      if (parts.length >= 5) {
+        const commandType = parts[2];
+        const commandContent = parts.slice(4).join('__');
+
+        // Detect if command was in Russian based on content
+        const isRussian = commandContent.includes('Погода:') ||
+                         commandContent.includes('Время:') ||
+                         commandContent.includes('Температура:') ||
+                         commandContent.includes('Текущее время') ||
+                         commandContent.includes('Результат:');
+
+        // Extract location/timezone from the command content
+        if (commandType === 'weather') {
+          // Extract city name from weather response
+          const cityMatch = commandContent.match(/(?:Weather:|Погода:)\s+(.+?)[\n\r]/);
+          const city = cityMatch ? cityMatch[1] : '';
+          return isRussian ? `🌤️ Погода: ${city}` : `🌤️ Weather: ${city}`;
+        } else if (commandType === 'time') {
+          // Extract timezone from time response
+          const tzMatch = commandContent.match(/\((.+?)\)/);
+          const tz = tzMatch ? tzMatch[1] : '';
+          return isRussian ? `🕐 Время: ${tz}` : `🕐 Time: ${tz}`;
+        } else if (commandType === 'calc') {
+          // Extract result from calculation response
+          const resultMatch = commandContent.match(/=\s+(.+?)$/m);
+          const result = resultMatch ? resultMatch[1] : '';
+          return isRussian ? `🧮 Результат: ${result}` : `🧮 Result: ${result}`;
+        } else if (commandType === 'help') {
+          return isRussian ? '❓ Помощь' : '❓ Help';
+        } else if (commandType === 'error') {
+          // Try to extract what the error was about
+          if (commandContent.includes('погоду:') || commandContent.includes('weather:')) {
+            const locationMatch = commandContent.match(/(?:погоду:|weather:)\s+(.+?)$/i);
+            const location = locationMatch ? locationMatch[1] : '';
+            return isRussian ? `⚠️ Погода: ${location}` : `⚠️ Weather: ${location}`;
+          } else if (commandContent.includes('время:') || commandContent.includes('time:')) {
+            const tzMatch = commandContent.match(/(?:время:|time:)\s+(.+?)$/i);
+            const tz = tzMatch ? tzMatch[1] : '';
+            return isRussian ? `⚠️ Время: ${tz}` : `⚠️ Time: ${tz}`;
+          }
+          return isRussian ? '⚠️ Ошибка команды' : '⚠️ Command error';
+        }
+      }
+    }
 
     // Check if it's an image URL
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -4058,21 +4497,21 @@ export default function ChatMain() {
 
                 <Tabs defaultValue="profile" className="w-full">
                   <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="profile" className="flex items-center justify-center gap-2">
-                      <User className="size-4" />
-                      <span className="hidden sm:inline">{t('settings.profile')}</span>
+                    <TabsTrigger value="profile" className="flex items-center justify-center gap-1 min-w-0">
+                      <User className="size-4 flex-shrink-0" />
+                      <span className="hidden sm:inline truncate">{t('settings.profile')}</span>
                     </TabsTrigger>
-                    <TabsTrigger value="appearance" className="flex items-center justify-center gap-2">
-                      <Palette className="size-4" />
-                      <span className="hidden sm:inline">{t('settings.appearance')}</span>
+                    <TabsTrigger value="appearance" className="flex items-center justify-center gap-1 min-w-0">
+                      <Palette className="size-4 flex-shrink-0" />
+                      <span className="hidden sm:inline truncate">{t('settings.appearance')}</span>
                     </TabsTrigger>
-                    <TabsTrigger value="notifications" className="flex items-center justify-center gap-2">
-                      <Bell className="size-4" />
-                      <span className="hidden sm:inline">{t('settings.notifications')}</span>
+                    <TabsTrigger value="notifications" className="flex items-center justify-center gap-1 min-w-0">
+                      <Bell className="size-4 flex-shrink-0" />
+                      <span className="hidden sm:inline truncate">{t('settings.notifications')}</span>
                     </TabsTrigger>
-                    <TabsTrigger value="extras" className="flex items-center justify-center gap-2">
-                      <Settings className="size-4" />
-                      <span className="hidden sm:inline">{t('settings.extras')}</span>
+                    <TabsTrigger value="extras" className="flex items-center justify-center gap-1 min-w-0">
+                      <Settings className="size-4 flex-shrink-0" />
+                      <span className="hidden sm:inline truncate">{t('settings.extras')}</span>
                     </TabsTrigger>
                   </TabsList>
 
@@ -4327,20 +4766,22 @@ export default function ChatMain() {
                       <div className="space-y-3">
                         <div>
                           <Label>{t('settings.language')}</Label>
-                          <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div className="mt-2 flex gap-2">
                             <Button
                               type="button"
                               variant={language === 'en' ? 'default' : 'outline'}
                               onClick={() => setLanguage('en')}
+                              className="flex-1 min-w-0"
                             >
-                              🇬🇧 English
+                              <span className="truncate">🇬🇧 English</span>
                             </Button>
                             <Button
                               type="button"
                               variant={language === 'ru' ? 'default' : 'outline'}
                               onClick={() => setLanguage('ru')}
+                              className="flex-1 min-w-0"
                             >
-                              🇷🇺 Русский
+                              <span className="truncate">🇷🇺 Русский</span>
                             </Button>
                           </div>
                         </div>
@@ -4618,6 +5059,100 @@ export default function ChatMain() {
               </DialogContent>
             </Dialog>
 
+            {/* Subscribe Button */}
+            <Dialog open={subscribeOpen} onOpenChange={setSubscribeOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  className="w-full justify-start text-xs h-8 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 mb-2"
+                >
+                  <Sparkles className="size-3 mr-2" />
+                  Subscribe
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle className="text-2xl">ChozaBoost Subscriptions</DialogTitle>
+                  <DialogDescription>
+                    Your balance: <span className="font-bold text-purple-600">{currentUser?.coins || 0} coins</span>
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-3">
+                  {/* Trial Banner */}
+                  {!currentUser?.trialUsed && (
+                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 border-2 border-green-300 dark:border-green-700 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Sparkles className="size-4 text-green-600" />
+                        <h4 className="font-bold text-green-700 dark:text-green-400">Free Trial Available!</h4>
+                      </div>
+                      <p className="text-sm text-green-600 dark:text-green-300 mb-2">Try ChozaBoost free for 7 days (one-time offer)</p>
+                      <Button
+                        className="w-full bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => handleSubscribe('boost', true)}
+                      >
+                        Start 7-Day Free Trial
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* ChozaBoost Tier */}
+                  <div className="border-2 border-purple-300 dark:border-purple-700 rounded-lg p-4 space-y-2 bg-gradient-to-br from-purple-50/50 to-pink-50/50 dark:from-purple-950/20 dark:to-pink-950/20">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-bold bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text text-transparent">
+                        ChozaBoost
+                      </h3>
+                      <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">
+                        10 coins/mo
+                      </Badge>
+                    </div>
+                    <ul className="text-xs space-y-1 text-gray-700 dark:text-gray-300">
+                      <li>✨ Tag gradient effect</li>
+                      <li>🎨 Animated emoji background on avatar</li>
+                      <li>⚡ Priority message delivery</li>
+                      <li>🌟 Exclusive badge</li>
+                    </ul>
+                    <Button
+                      className="w-full bg-gradient-to-r from-purple-500 to-pink-400 hover:from-purple-600 hover:to-pink-500 text-white text-sm"
+                      onClick={() => handleSubscribe('boost', false)}
+                      disabled={(currentUser?.coins || 0) < 10 || (currentUser?.subscription?.tier === 'boost' && new Date(currentUser.subscription.expiresAt) > new Date())}
+                    >
+                      {currentUser?.subscription?.tier === 'boost' && new Date(currentUser.subscription.expiresAt) > new Date()
+                        ? `Active until ${new Date(currentUser.subscription.expiresAt).toLocaleDateString()}`
+                        : 'Subscribe'}
+                    </Button>
+                  </div>
+
+                  {/* ChozaBoost Ultra Tier */}
+                  <div className="border-2 border-pink-300 dark:border-pink-700 rounded-lg p-4 space-y-2 bg-gradient-to-br from-pink-50/50 to-purple-50/50 dark:from-pink-950/20 dark:to-purple-950/20">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-bold bg-gradient-to-r from-pink-600 via-purple-500 to-blue-500 bg-clip-text text-transparent">
+                        ChozaBoost Ultra
+                      </h3>
+                      <Badge className="bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300">
+                        15 coins/mo
+                      </Badge>
+                    </div>
+                    <ul className="text-xs space-y-1 text-gray-700 dark:text-gray-300">
+                      <li>💎 Everything in ChozaBoost, plus:</li>
+                      <li>🎨 Custom tag color picker</li>
+                      <li>🌈 Custom tag gradient creator</li>
+                      <li>👑 Ultra-exclusive badge</li>
+                      <li>🔥 Enhanced animated effects</li>
+                    </ul>
+                    <Button
+                      className="w-full bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 hover:from-pink-600 hover:via-purple-600 hover:to-blue-600 text-white text-sm"
+                      onClick={() => handleSubscribe('ultra', false)}
+                      disabled={(currentUser?.coins || 0) < 15 || (currentUser?.subscription?.tier === 'ultra' && new Date(currentUser.subscription.expiresAt) > new Date())}
+                    >
+                      {currentUser?.subscription?.tier === 'ultra' && new Date(currentUser.subscription.expiresAt) > new Date()
+                        ? `Active until ${new Date(currentUser.subscription.expiresAt).toLocaleDateString()}`
+                        : 'Subscribe'}
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             {/* Logout Button */}
             <Button variant="outline" className="w-full justify-start text-red-600 dark:border-gray-700 dark:hover:bg-gray-800" onClick={handleLogout}>
               <LogOut className="size-5 mr-2" />
@@ -4641,7 +5176,7 @@ export default function ChatMain() {
           <div className="flex items-center gap-1.5">
             <span key="name" className="font-semibold dark:text-white">{currentUser?.name}</span>
             {currentUser?.verified && <span key="verified">{renderVerifiedBadge()}</span>}
-            {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor) && <span key="tag">{renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor)}</span>}
+            {renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor, currentUser?.subscription) && <span key="tag">{renderTagBadge(currentUser?.tag, isUserAdmin(currentUser), currentUser?.tagColor, currentUser?.subscription)}</span>}
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400">@{currentUser?.username}</div>
         </div>
@@ -4695,9 +5230,15 @@ export default function ChatMain() {
             {searchResults.map((result: any) => (
               <div key={result.id} className="flex items-center gap-3 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
                 <Avatar className="flex-shrink-0">
-                  <AvatarFallback className={result.type === 'channel' ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'}>
+                  <AvatarFallback className={
+                    result.type === 'bot' ? 'bg-green-600 text-white' :
+                    result.type === 'channel' ? 'bg-purple-600 text-white' :
+                    'bg-blue-600 text-white'
+                  }>
                     {result.emoji ? (
                       <span className="text-xl">{result.emoji}</span>
+                    ) : result.type === 'bot' ? (
+                      <BotIcon className="size-4" />
                     ) : result.type === 'channel' ? (
                       <Hash className="size-4" />
                     ) : (
@@ -4708,10 +5249,19 @@ export default function ChatMain() {
                 <div className="flex-1 min-w-0">
                   <div className="font-medium dark:text-white truncate">{result.name}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    @{result.username || result.email?.split('@')[0]}
+                    {result.type === 'bot' ? (result.description || 'Bot') : `@${result.username || result.email?.split('@')[0]}`}
                   </div>
                 </div>
-                {result.type === 'channel' ? (
+                {result.type === 'bot' ? (
+                  <Button size="sm" onClick={() => {
+                    setSelectedChat({ type: 'bot', id: result.id, name: result.name });
+                    setMessages([]);
+                    setSearchResults([]);
+                    setSearchQuery('');
+                  }}>
+                    Chat
+                  </Button>
+                ) : result.type === 'channel' ? (
                   <Button size="sm" onClick={() => handleJoinChannel(result.id)}>
                     Join
                   </Button>
@@ -4873,8 +5423,7 @@ export default function ChatMain() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: index * 0.05, duration: 0.3 }}
-              whileHover={{ scale: 1.02, x: 4 }}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
+              className={`w-full p-2 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                 selectedChat?.type === 'friend' && selectedChat.id.includes(friend.id)
                   ? 'bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/40 dark:to-purple-900/40 border-l-4 border-blue-500'
                   : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
@@ -4882,20 +5431,20 @@ export default function ChatMain() {
             >
               <button
                 onClick={() => selectFriendChat(friend)}
-                className="flex items-center gap-3 flex-1 min-w-0"
+                className="flex items-center gap-2 flex-1 min-w-0"
               >
-                <Avatar className="flex-shrink-0">
+                <Avatar className="flex-shrink-0 h-9 w-9">
                   <AvatarFallback className="bg-gray-300 dark:bg-gray-700">
                     {friend.emoji ? (
-                      <span className="text-2xl">{friend.emoji}</span>
+                      <span className="text-xl">{friend.emoji}</span>
                     ) : (
                       friend.name?.charAt(0)?.toUpperCase() || '?'
                     )}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1 text-left">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="font-medium dark:text-white truncate">{friend.name}</span>
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="font-medium text-sm dark:text-white truncate">{friend.name}</span>
                     {friend.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
                     {(() => {
                       const badge = renderTagBadge(friend.tag, isUserAdmin(friend), friend.tagColor);
@@ -4916,7 +5465,7 @@ export default function ChatMain() {
                 const chatId = [userId, friend.id].sort().join(":");
                 const unreadCount = unreadMessages[`friend-${chatId}`];
                 return unreadCount > 0 ? (
-                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-4 min-w-[18px] rounded-full flex-shrink-0">
                     {unreadCount}
                   </Badge>
                 ) : null;
@@ -4926,10 +5475,10 @@ export default function ChatMain() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 flex-shrink-0"
+                    className="h-7 w-7 flex-shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical className="size-4" />
+                    <MoreVertical className="size-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -4974,26 +5523,25 @@ export default function ChatMain() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20, scale: 0.9 }}
               transition={{ delay: index * 0.05, duration: 0.3 }}
-              whileHover={{ scale: 1.02, x: 4 }}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
+              className={`w-full p-2 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                 selectedChat?.id === group.id ? 'bg-gradient-to-r from-purple-100 to-pink-100 dark:from-purple-900/40 dark:to-pink-900/40 border-l-4 border-purple-500' : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
               }`}
             >
               <button
                 onClick={() => selectGroupChat(group)}
-                className="flex items-center gap-3 flex-1 min-w-0"
+                className="flex items-center gap-2 flex-1 min-w-0"
               >
-                <Avatar className="flex-shrink-0">
+                <Avatar className="flex-shrink-0 h-9 w-9">
                   <AvatarFallback className="bg-purple-600 text-white">
                     {group.emoji ? (
-                      <span className="text-2xl">{group.emoji}</span>
+                      <span className="text-xl">{group.emoji}</span>
                     ) : (
                       <Users className="size-4" />
                     )}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1 text-left">
-                  <span className="font-medium dark:text-white truncate block">{group.name}</span>
+                  <span className="font-medium text-sm dark:text-white truncate block">{group.name}</span>
                   <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">
                     {(() => {
                       const chatKey = `group-${group.id}`;
@@ -5006,7 +5554,7 @@ export default function ChatMain() {
               {(() => {
                 const unreadCount = unreadMessages[`group-${group.id}`];
                 return unreadCount > 0 ? (
-                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-4 min-w-[18px] rounded-full flex-shrink-0">
                     {unreadCount}
                   </Badge>
                 ) : null;
@@ -5016,10 +5564,10 @@ export default function ChatMain() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 flex-shrink-0"
+                    className="h-7 w-7 flex-shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical className="size-4" />
+                    <MoreVertical className="size-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -5085,27 +5633,26 @@ export default function ChatMain() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: index * 0.05, duration: 0.3 }}
-              whileHover={{ scale: 1.02, x: 4 }}
-              className={`w-full p-3 rounded-lg flex items-center gap-3 transition-all shadow-sm hover:shadow-md cursor-pointer ${
+              className={`w-full p-2 rounded-lg flex items-center gap-2 transition-all shadow-sm hover:shadow-md cursor-pointer ${
                 selectedChat?.id === channel.id ? 'bg-gradient-to-r from-green-100 to-teal-100 dark:from-green-900/40 dark:to-teal-900/40 border-l-4 border-green-500' : 'hover:bg-gradient-to-r hover:from-gray-100 hover:to-gray-50 dark:hover:from-gray-800 dark:hover:to-gray-700'
               }`}
             >
               <button
                 onClick={() => selectChannelChat(channel)}
-                className="flex items-center gap-3 flex-1 min-w-0"
+                className="flex items-center gap-2 flex-1 min-w-0"
               >
-                <Avatar className="flex-shrink-0">
+                <Avatar className="flex-shrink-0 h-9 w-9">
                   <AvatarFallback className="bg-green-600 text-white">
                     {channel.emoji ? (
-                      <span className="text-2xl">{channel.emoji}</span>
+                      <span className="text-xl">{channel.emoji}</span>
                     ) : (
                       <Hash className="size-4" />
                     )}
                   </AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1 text-left">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="font-medium dark:text-white truncate">{channel.name}</span>
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="font-medium text-sm dark:text-white truncate">{channel.name}</span>
                     {channel.verified && <span className="flex-shrink-0">{renderVerifiedBadge()}</span>}
                   </div>
                   <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">
@@ -5120,7 +5667,7 @@ export default function ChatMain() {
               {(() => {
                 const unreadCount = unreadMessages[`channel-${channel.id}`];
                 return unreadCount > 0 ? (
-                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-5 min-w-[20px] rounded-full flex-shrink-0">
+                  <Badge className="bg-red-500 text-white text-xs px-1.5 py-0.5 h-4 min-w-[18px] rounded-full flex-shrink-0">
                     {unreadCount}
                   </Badge>
                 ) : null;
@@ -5130,10 +5677,10 @@ export default function ChatMain() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 flex-shrink-0"
+                    className="h-7 w-7 flex-shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical className="size-4" />
+                    <MoreVertical className="size-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -5302,27 +5849,46 @@ export default function ChatMain() {
                     }
                     
                     // Check if this looks like a poll message but poll data is missing
-                    const looksLikePoll = !message.poll && message.content?.startsWith('📊 Poll:');
-                    if (looksLikePoll) {
-                      console.warn('⚠️ Poll message missing poll data:', message.id, message.content);
+                    // Check if message is a command
+                    const isCommandMessage = message.content?.startsWith('__COMMAND__');
+                    let commandType: 'weather' | 'time' | 'help' | 'error' = 'error';
+                    let commandSuccess = false;
+                    let commandContent = message.content || '';
+
+                    if (isCommandMessage) {
+                      const parts = message.content?.split('__') || [];
+                      if (parts.length >= 5) {
+                        commandType = parts[2] as any;
+                        commandSuccess = parts[3] === 'true';
+                        commandContent = parts.slice(4).join('__');
+                      }
                     }
-                    
+
+                    const looksLikePoll = !message.poll && message.content?.startsWith('📊 Poll:');
+                    // Don't warn about old broken polls - just hide them
+
                     return (
                       <motion.div
                         key={message.id}
                         initial={{ opacity: 0, y: 20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ 
+                        transition={{
                           duration: 0.3,
                           delay: index * 0.02,
                           type: "spring",
                           stiffness: 200,
                           damping: 20
                         }}
-                        className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                        className={`flex ${isCommandMessage ? 'justify-center' : isOwn ? 'justify-end' : 'justify-start'}`}
                       >
-                        {message.poll ? (
+                        {isCommandMessage ? (
+                          <CommandMessage
+                            type={commandType}
+                            success={commandSuccess}
+                            content={commandContent}
+                          />
+                        ) : message.poll ? (
                           <div className="w-[85%] max-w-[85%] sm:w-full sm:max-w-2xl">
                             <PollMessage
                               poll={message.poll}
@@ -5353,20 +5919,8 @@ export default function ChatMain() {
                             />
                           </div>
                         ) : looksLikePoll ? (
-                          <div className="max-w-md p-4 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700">
-                            <div className="flex items-start gap-2">
-                              <span className="text-2xl">⚠️</span>
-                              <div className="flex-1">
-                                <div className="font-semibold text-yellow-800 dark:text-yellow-200">Poll Data Missing</div>
-                                <div className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                                  This poll's data is not available. The backend needs to return poll data in the message response.
-                                </div>
-                                <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2 font-mono">
-                                  {message.content}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          // Hide old broken poll messages instead of showing warning
+                          null
                         ) : (
                           <MessageItem
                             message={message}
@@ -5379,6 +5933,7 @@ export default function ChatMain() {
                             getSenderTag={getSenderTag}
                             getSenderIsAdmin={getSenderIsAdmin}
                             getSenderTagColor={getSenderTagColor}
+                            getSenderSubscription={getSenderSubscription}
                             renderVerifiedBadge={renderVerifiedBadge}
                             renderTagBadge={renderTagBadge}
                             onReply={handleReplyToMessage}
@@ -5395,6 +5950,7 @@ export default function ChatMain() {
                               const readBy = message.readBy || [];
                               return readBy.some(id => id !== message.senderId);
                             })()}
+                            availableUsers={friends}
                           />
                         )}
                       </motion.div>
@@ -5450,8 +6006,10 @@ export default function ChatMain() {
                   onSubmit={handleSendMessage}
                   onEdit={handleEditMessage}
                   onStickerClick={() => setStickerPickerOpen(true)}
+                  availableUsers={friends}
                   onGifClick={() => setGifPickerOpen(true)}
                   onAttachClick={() => setPollCreatorOpen(true)}
+                  onImageUpload={handleImageUpload}
                   getSenderName={getSenderName}
                   messageInputRef={messageInputRef}
                   messagesEndRef={messagesEndRef}
@@ -5745,6 +6303,77 @@ export default function ChatMain() {
                       >
                         ✓ Remove SCAM Tag
                       </Button>
+                    )}
+                    {/* Coin Management */}
+                    {user.id !== userId && (
+                      <div className="space-y-2 pt-2 border-t dark:border-gray-700">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600 dark:text-gray-400">Coins:</span>
+                          <span className="font-bold text-purple-600 dark:text-purple-400">{user.coins || 0}</span>
+                        </div>
+                        {user.subscription?.tier && new Date(user.subscription.expiresAt) > new Date() && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-600 dark:text-gray-400">Subscription:</span>
+                            <Badge className={user.subscription.tier === 'ultra' ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white' : 'bg-gradient-to-r from-purple-500 to-pink-400 text-white'}>
+                              {user.subscription.tier === 'ultra' ? 'ChozaBoost Ultra' : 'ChozaBoost'}
+                            </Badge>
+                          </div>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-yellow-500 hover:to-orange-500 text-white border-0"
+                          onClick={() => {
+                            setPromptConfig({
+                              title: 'Add Coins',
+                              description: `Add coins to ${user.name}'s balance (current: ${user.coins || 0} coins)`,
+                              placeholder: 'Amount of coins',
+                              type: 'number',
+                              onConfirm: async (value) => {
+                                if (value) {
+                                  const amount = parseInt(value);
+                                  if (amount > 0) {
+                                    try {
+                                      const updatedUser = {
+                                        ...user,
+                                        coins: (user.coins || 0) + amount
+                                      };
+
+                                      const response = await fetch(
+                                        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/set`,
+                                        {
+                                          method: "POST",
+                                          headers: {
+                                            "Content-Type": "application/json",
+                                            Authorization: `Bearer ${publicAnonKey}`,
+                                          },
+                                          body: JSON.stringify({
+                                            key: `user:${user.id}`,
+                                            value: updatedUser
+                                          }),
+                                        }
+                                      );
+
+                                      if (!response.ok) {
+                                        throw new Error("Failed to add coins");
+                                      }
+
+                                      toast.success(`Added ${amount} coins to ${user.name}! New balance: ${updatedUser.coins}`);
+                                      handleAdminPanelOpen(); // Refresh
+                                    } catch (error) {
+                                      console.error("Add coins error:", error);
+                                      toast.error("Failed to add coins");
+                                    }
+                                  }
+                                }
+                              }
+                            });
+                            setPromptOpen(true);
+                          }}
+                        >
+                          💰 Add Coins
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}

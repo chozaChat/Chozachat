@@ -1,9 +1,10 @@
 import { motion } from 'motion/react';
 import { Button } from './ui/button';
-import { Reply, Pencil, Trash2, Sparkles } from 'lucide-react';
+import { Reply, Pencil, Trash2, Sparkles, User, MessageCircle } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigate } from 'react-router';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 
 interface Message {
   id: string;
@@ -20,6 +21,15 @@ interface Message {
   };
 }
 
+interface UserProfile {
+  id: string;
+  name: string;
+  username: string;
+  emoji?: string;
+  verified?: boolean;
+  tag?: string;
+}
+
 interface MessageItemProps {
   message: Message;
   isOwn: boolean;
@@ -31,12 +41,14 @@ interface MessageItemProps {
   getSenderTag: (id: string) => string;
   getSenderIsAdmin: (data: any) => boolean;
   getSenderTagColor: (id: string) => string;
+  getSenderSubscription: (id: string) => { tier: 'boost' | 'ultra' | null, customGradient?: string, tagGradient?: string, expiresAt?: string } | null;
   renderVerifiedBadge: () => JSX.Element;
-  renderTagBadge: (tag: string, isAdmin: boolean, color: string) => JSX.Element | null;
+  renderTagBadge: (tag: string, isAdmin: boolean, color: string, subscription?: { tier: 'boost' | 'ultra' | null, customGradient?: string, tagGradient?: string, expiresAt?: string }) => JSX.Element | null;
   onReply: (message: Message) => void;
   onEdit: (message: Message, content: string) => void;
   onDelete: (messageId: string) => void;
-  isRead?: boolean; // Whether the message has been read by recipient(s)
+  isRead?: boolean;
+  availableUsers?: UserProfile[];
 }
 
 export function MessageItem({
@@ -50,19 +62,44 @@ export function MessageItem({
   getSenderTag,
   getSenderIsAdmin,
   getSenderTagColor,
+  getSenderSubscription,
   renderVerifiedBadge,
   renderTagBadge,
   onReply,
   onEdit,
   onDelete,
-  isRead = false
+  isRead = false,
+  availableUsers = []
 }: MessageItemProps) {
+  const getNameStyle = (senderId: string) => {
+    const subscription = getSenderSubscription(senderId);
+    if (!subscription?.tier) return {};
+
+    if (subscription.tier === 'ultra' && subscription.customGradient) {
+      return { backgroundImage: subscription.customGradient, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' };
+    } else if (subscription.tier === 'ultra') {
+      return { backgroundImage: 'linear-gradient(to right, #ec4899, #a855f7, #3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' };
+    } else if (subscription.tier === 'boost') {
+      return { backgroundImage: 'linear-gradient(to right, #a855f7, #ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' };
+    }
+    return {};
+  };
   const [menuOpen, setMenuOpen] = useState(false);
   const [stickerMenuOpen, setStickerMenuOpen] = useState(false);
+  const [userProfileOpen, setUserProfileOpen] = useState(false);
+  const [selectedUserProfile, setSelectedUserProfile] = useState<UserProfile | null>(null);
   const stickerMenuRef = useRef<HTMLDivElement>(null);
   const { t } = useLanguage();
   const navigate = useNavigate();
   const messageContent = message.content || message.text || '';
+
+  const handleUserTagClick = (username: string) => {
+    const user = availableUsers.find(u => u.username === username);
+    if (user) {
+      setSelectedUserProfile(user);
+      setUserProfileOpen(true);
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -122,9 +159,9 @@ export function MessageItem({
                   {getSenderEmoji(message.senderId) && (
                     <span className="text-sm">{getSenderEmoji(message.senderId)}</span>
                   )}
-                  <span>{getSenderName(message.senderId)}</span>
+                  <span style={getNameStyle(message.senderId)} className="font-semibold">{getSenderName(message.senderId)}</span>
                   {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
-                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
+                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId), getSenderSubscription(message.senderId) || undefined)}
                 </>
               )}
             </div>
@@ -160,9 +197,9 @@ export function MessageItem({
                   {getSenderEmoji(message.senderId) && (
                     <span className="text-sm">{getSenderEmoji(message.senderId)}</span>
                   )}
-                  <span>{getSenderName(message.senderId)}</span>
+                  <span style={getNameStyle(message.senderId)} className="font-semibold">{getSenderName(message.senderId)}</span>
                   {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
-                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
+                  {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId), getSenderSubscription(message.senderId) || undefined)}
                 </>
               )}
             </div>
@@ -234,9 +271,9 @@ export function MessageItem({
                   <span className="font-semibold">AI Assistant</span>
                 ) : (
                   <>
-                    <span>{getSenderName(message.senderId)}</span>
+                    <span style={getNameStyle(message.senderId)} className="font-semibold">{getSenderName(message.senderId)}</span>
                     {getSenderIsVerified(message.senderId) && renderVerifiedBadge()}
-                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId))}
+                    {renderTagBadge(getSenderTag(message.senderId), getSenderIsAdmin(message.senderId), getSenderTagColor(message.senderId), getSenderSubscription(message.senderId) || undefined)}
                   </>
                 )}
               </div>
@@ -257,7 +294,7 @@ export function MessageItem({
                 <div className="truncate">{message.replyTo.content}</div>
               </div>
             )}
-            <div className="break-words">
+            <div className="break-words whitespace-pre-wrap">
               {isAI && !messageContent ? (
                 <span className="animate-shimmer font-semibold">Generating response...</span>
               ) : isAI ? (
@@ -271,7 +308,25 @@ export function MessageItem({
                   return <span key={i}>{part}</span>;
                 })
               ) : (
-                messageContent
+                // Format user tags
+                messageContent.split(/(@\w+)/g).map((part, i) => {
+                  if (part.startsWith('@')) {
+                    const username = part.slice(1);
+                    return (
+                      <span
+                        key={i}
+                        className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUserTagClick(username);
+                        }}
+                      >
+                        @{username}
+                      </span>
+                    );
+                  }
+                  return <span key={i}>{part}</span>;
+                })
               )}
             </div>
           </motion.div>
@@ -339,6 +394,59 @@ export function MessageItem({
           </div>
         </div>
       )}
+
+      {/* User Profile Dialog */}
+      <Dialog open={userProfileOpen} onOpenChange={setUserProfileOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('tag.viewProfile')}</DialogTitle>
+          </DialogHeader>
+          {selectedUserProfile && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 flex items-center justify-center text-3xl shadow-lg">
+                  {selectedUserProfile.emoji ? <span>{selectedUserProfile.emoji}</span> : <User className="size-8" />}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xl font-bold dark:text-white">{selectedUserProfile.name}</h3>
+                    {selectedUserProfile.verified && renderVerifiedBadge()}
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">@{selectedUserProfile.username}</p>
+                  {selectedUserProfile.tag && (
+                    <div className="mt-1">
+                      {renderTagBadge(selectedUserProfile.tag, false, '#3B82F6')}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    navigate(`/u/${selectedUserProfile.username}`);
+                    setUserProfileOpen(false);
+                  }}
+                >
+                  <User className="size-4 mr-2" />
+                  {t('tag.viewProfile')}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    // TODO: Navigate to DM with this user
+                    setUserProfileOpen(false);
+                  }}
+                >
+                  <MessageCircle className="size-4 mr-2" />
+                  {t('tag.sendMessage')}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

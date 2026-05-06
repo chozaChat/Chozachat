@@ -1,0 +1,2 @@
+# Add PocketBase to package.json dependencies
+bun install pocketbase

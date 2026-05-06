@@ -4,7 +4,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { ArrowLeft, Save, Trash2, Globe } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Globe, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "../contexts/ThemeContext";
 import { useBlur } from "../contexts/BlurContext";
@@ -30,6 +30,7 @@ export default function CustomLanguageEditor() {
   const [availableLanguages, setAvailableLanguages] = useState<Array<{ key: string; displayName: string }>>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [createdBy, setCreatedBy] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Custom prompt states
   const [showCreatePrompt, setShowCreatePrompt] = useState(false);
@@ -39,6 +40,16 @@ export default function CustomLanguageEditor() {
   const allKeys = Object.keys(translations.en).filter(key => {
     // Filter out admin-specific keys
     return !key.startsWith('admin.');
+  });
+
+  // Filter keys based on search query
+  const filteredKeys = allKeys.filter(key => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    const keyMatch = key.toLowerCase().includes(query);
+    const valueMatch = translations[baseLanguage][key]?.toLowerCase().includes(query);
+    const customMatch = customTranslations[key]?.toLowerCase().includes(query);
+    return keyMatch || valueMatch || customMatch;
   });
 
   useEffect(() => {
@@ -421,15 +432,41 @@ export default function CustomLanguageEditor() {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-semibold dark:text-white">{t('lang.translations')}</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {t('lang.leaveEmpty')} {baseLanguage === 'en' ? 'English' : 'Russian'} {t('lang.fallback')}
-            </p>
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
+            <div>
+              <h2 className="text-lg font-semibold dark:text-white">{t('lang.translations')}</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {t('lang.leaveEmpty')} {baseLanguage === 'en' ? 'English' : 'Russian'} {t('lang.fallback')}
+              </p>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 size-4 text-gray-400" />
+              <Input
+                type="text"
+                placeholder="Search translations..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 dark:bg-gray-700 dark:text-white"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            {searchQuery && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Showing {filteredKeys.length} of {allKeys.length} translations
+              </p>
+            )}
           </div>
           <ScrollArea className="h-[calc(100vh-350px)]">
             <div className="p-4 space-y-4">
-              {allKeys.map(key => (
+              {filteredKeys.length > 0 ? (
+                filteredKeys.map(key => (
                 <div key={key} className="space-y-1">
                   <div className="flex items-center justify-between">
                     <Label htmlFor={key} className="text-xs text-gray-600 dark:text-gray-400 font-mono">
@@ -447,7 +484,13 @@ export default function CustomLanguageEditor() {
                     className="dark:bg-gray-700 dark:text-white"
                   />
                 </div>
-              ))}
+              ))
+              ) : (
+                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                  <Search className="size-8 mx-auto mb-2 opacity-50" />
+                  <p>No translations found matching "{searchQuery}"</p>
+                </div>
+              )}
             </div>
           </ScrollArea>
         </div>

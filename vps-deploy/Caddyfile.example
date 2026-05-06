@@ -1,0 +1,14 @@
+# Add this to your existing Caddyfile
+
+api.chozachat.xyz {
+    reverse_proxy localhost:3000
+
+    # Optional: Add rate limiting
+    # rate_limit {
+    #     zone api_limit {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+}

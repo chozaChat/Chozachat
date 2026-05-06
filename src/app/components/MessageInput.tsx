@@ -1,8 +1,8 @@
 import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Reply, Pencil, X, Smile, Send, Paperclip, Film } from 'lucide-react';
-import { RefObject } from 'react';
+import { Reply, Pencil, X, Smile, Send, Paperclip, Film, User } from 'lucide-react';
+import { RefObject, useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 interface Message {
@@ -11,6 +11,13 @@ interface Message {
   text?: string;
   content?: string;
   timestamp: string;
+}
+
+interface User {
+  id: string;
+  name: string;
+  username: string;
+  emoji?: string;
 }
 
 interface MessageInputProps {
@@ -27,8 +34,15 @@ interface MessageInputProps {
   onGifClick?: () => void;
   onAttachClick?: () => void;
   getSenderName: (id: string) => string;
-  messageInputRef: RefObject<HTMLInputElement>;
+  messageInputRef: RefObject<HTMLTextAreaElement | HTMLInputElement>;
   messagesEndRef: RefObject<HTMLDivElement>;
+  availableUsers?: User[];
+}
+
+interface Command {
+  name: string;
+  description: string;
+  icon: string;
 }
 
 export function MessageInput({
@@ -46,9 +60,135 @@ export function MessageInput({
   onAttachClick,
   getSenderName,
   messageInputRef,
-  messagesEndRef
+  messagesEndRef,
+  availableUsers = []
 }: MessageInputProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionType, setSuggestionType] = useState<'users' | 'commands'>('users');
+  const [userSuggestions, setUserSuggestions] = useState<User[]>([]);
+  const [commandSuggestions, setCommandSuggestions] = useState<Command[]>([]);
+  const [mentionStartPos, setMentionStartPos] = useState<number | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  const availableCommands: Command[] = [
+    { name: 'weather', description: language === 'ru' ? 'Погода в городе' : 'Weather in city', icon: '🌤️' },
+    { name: 'time', description: language === 'ru' ? 'Время в часовом поясе' : 'Time in timezone', icon: '🕐' },
+    { name: 'calc', description: language === 'ru' ? 'Вычислить выражение' : 'Calculate expression', icon: '🧮' },
+    { name: 'help', description: language === 'ru' ? 'Показать все команды' : 'Show all commands', icon: '❓' },
+  ];
+
+  // Detect @mentions and / commands and show suggestions
+  useEffect(() => {
+    const cursorPos = messageInputRef.current?.selectionStart || 0;
+    const textBeforeCursor = messageText.slice(0, cursorPos);
+
+    // Check for / commands
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    if (lastSlashIndex !== -1 && (lastSlashIndex === 0 || textBeforeCursor[lastSlashIndex - 1] === ' ')) {
+      const textAfterSlash = textBeforeCursor.slice(lastSlashIndex + 1);
+      if (!textAfterSlash.includes(' ')) {
+        const query = textAfterSlash.toLowerCase();
+        const filtered = query === '' ? availableCommands : availableCommands.filter(cmd =>
+          cmd.name.toLowerCase().includes(query)
+        );
+
+        setCommandSuggestions(filtered);
+        setMentionStartPos(lastSlashIndex);
+        setSuggestionType('commands');
+        setShowSuggestions(true);
+        return;
+      }
+    }
+
+    // Check for @mentions
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    if (lastAtIndex !== -1 && (lastAtIndex === 0 || textBeforeCursor[lastAtIndex - 1] === ' ')) {
+      const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
+      if (!textAfterAt.includes(' ')) {
+        const query = textAfterAt.toLowerCase();
+        const filtered = query === '' ? availableUsers.slice(0, 5) : availableUsers.filter(user =>
+          user.username.toLowerCase().includes(query) ||
+          user.name.toLowerCase().includes(query)
+        ).slice(0, 5);
+
+        setUserSuggestions(filtered);
+        setMentionStartPos(lastAtIndex);
+        setSuggestionType('users');
+        setShowSuggestions(true);
+        return;
+      }
+    }
+
+    setShowSuggestions(false);
+  }, [messageText, availableUsers, language]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+
+    if (showSuggestions) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showSuggestions]);
+
+  const selectUser = (user: User) => {
+    if (mentionStartPos === null) return;
+
+    const beforeMention = messageText.slice(0, mentionStartPos);
+    const afterCursor = messageText.slice(messageInputRef.current?.selectionStart || messageText.length);
+    const newText = `${beforeMention}@${user.username} ${afterCursor}`;
+
+    setMessageText(newText);
+    if (editingMessage) {
+      setEditMessageText(newText);
+    }
+    setShowSuggestions(false);
+    messageInputRef.current?.focus();
+  };
+
+  const selectCommand = (command: Command) => {
+    if (mentionStartPos === null) return;
+
+    const beforeCommand = messageText.slice(0, mentionStartPos);
+    const afterCursor = messageText.slice(messageInputRef.current?.selectionStart || messageText.length);
+    const newText = `${beforeCommand}/${command.name} ${afterCursor}`;
+
+    setMessageText(newText);
+    if (editingMessage) {
+      setEditMessageText(newText);
+    }
+    setShowSuggestions(false);
+    messageInputRef.current?.focus();
+  };
+
+  const resetTextareaHeight = () => {
+    if (messageInputRef.current) {
+      (messageInputRef.current as HTMLTextAreaElement).style.height = 'auto';
+      (messageInputRef.current as HTMLTextAreaElement).style.height = '42px';
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (editingMessage) {
+        onEdit();
+      } else {
+        onSubmit(e as any);
+      }
+      // Reset textarea height after sending
+      setTimeout(resetTextareaHeight, 0);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +197,8 @@ export function MessageInput({
     } else {
       onSubmit(e);
     }
+    // Reset textarea height after sending
+    setTimeout(resetTextareaHeight, 0);
   };
 
   const cancelEdit = () => {
@@ -66,7 +208,63 @@ export function MessageInput({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 relative">
+      {/* Suggestions dropdown */}
+      {showSuggestions && (
+        <motion.div
+          ref={suggestionsRef}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute bottom-full mb-2 left-0 right-0 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto z-50"
+        >
+          <div className="p-2 space-y-1">
+            {suggestionType === 'users' ? (
+              userSuggestions.length > 0 ? (
+                userSuggestions.map(user => (
+                  <button
+                    key={user.id}
+                    onClick={() => selectUser(user)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-left"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 flex items-center justify-center text-lg shadow-sm">
+                      {user.emoji ? <span>{user.emoji}</span> : <User className="size-4" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium dark:text-white truncate">{user.name}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 truncate">@{user.username}</div>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                  {t('tag.noUsersFound')}
+                </div>
+              )
+            ) : (
+              commandSuggestions.length > 0 ? (
+                commandSuggestions.map(cmd => (
+                  <button
+                    key={cmd.name}
+                    onClick={() => selectCommand(cmd)}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-left"
+                  >
+                    <div className="text-2xl">{cmd.icon}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium dark:text-white">/{cmd.name}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{cmd.description}</div>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                  {language === 'ru' ? 'Команды не найдены' : 'No commands found'}
+                </div>
+              )
+            )}
+          </div>
+        </motion.div>
+      )}
+
       {/* Reply indicator */}
       {replyingTo && (
         <motion.div 
@@ -143,18 +341,22 @@ export function MessageInput({
             </Button>
           </motion.div>
         )}
-        <Input
-          ref={messageInputRef}
-          type="text"
+        <textarea
+          ref={messageInputRef as any}
           placeholder={editingMessage ? t('message.editMessage') : t('message.typeMessage')}
           value={messageText}
+          rows={1}
           onChange={(e) => {
             setMessageText(e.target.value);
             // Also update editMessageText when editing
             if (editingMessage) {
               setEditMessageText(e.target.value);
             }
+            // Auto-resize
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
           }}
+          onKeyDown={handleKeyDown}
           onFocus={() => {
             // Only scroll to bottom on focus if user is near bottom (for mobile keyboard)
             const scrollViewport = messagesEndRef.current?.parentElement?.parentElement;
@@ -167,7 +369,8 @@ export function MessageInput({
               }
             }
           }}
-          className="flex-1 border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-600 rounded-full px-4 transition-all shadow-sm focus:shadow-md"
+          className="flex-1 border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-600 rounded-2xl px-4 py-2 transition-all shadow-sm focus:shadow-md resize-none overflow-y-auto dark:bg-gray-800 dark:text-white"
+          style={{ minHeight: '42px', maxHeight: '150px' }}
         />
         <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}>
           <Button 

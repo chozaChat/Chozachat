@@ -26,6 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { ScrollArea } from "../components/ui/scroll-area";
+import { Badge } from "../components/ui/badge";
 
 const SERVER_ID = "make-server-a1c86d03";
 
@@ -64,6 +65,13 @@ interface User {
   isModerator?: boolean;
   isScammer?: boolean;
   tags?: string[];
+  coins?: number;
+  subscription?: {
+    tier: 'boost' | 'ultra' | null;
+    expiresAt: string;
+    tagGradient?: string;
+    customGradient?: string;
+  };
 }
 
 interface Channel {
@@ -96,6 +104,8 @@ export default function AdminPanel() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [selectedChannelIds, setSelectedChannelIds] = useState<Set<string>>(new Set());
   const [bulkDeleteChannelsDialogOpen, setBulkDeleteChannelsDialogOpen] = useState(false);
+  const [addCoinsDialogOpen, setAddCoinsDialogOpen] = useState(false);
+  const [coinsAmount, setCoinsAmount] = useState("");
 
   // Settings states
   const [serverName, setServerName] = useState("ChozaChat Admin");
@@ -456,14 +466,20 @@ export default function AdminPanel() {
     navigate("/");
   };
 
+  const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
   const handleDeleteUser = async (user: User) => {
-    if (!confirm(`Delete user ${user.name}? This action cannot be undone.`)) {
-      return;
-    }
+    setUserToDelete(user);
+    setDeleteUserDialogOpen(true);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${userToDelete.id}`,
         {
           method: "DELETE",
           headers: {
@@ -480,9 +496,11 @@ export default function AdminPanel() {
         return;
       }
 
-      toast.success(`User ${user.name} deleted successfully`);
+      toast.success(`User ${userToDelete.name} deleted successfully`);
       setUserMenuOpen(false);
       setSelectedUser(null);
+      setDeleteUserDialogOpen(false);
+      setUserToDelete(null);
       loadAllUsers();
     } catch (error) {
       console.error("Delete user error:", error);
@@ -629,14 +647,20 @@ export default function AdminPanel() {
     }
   };
 
+  const [scamDialogOpen, setScamDialogOpen] = useState(false);
+  const [scamUser, setScamUser] = useState<User | null>(null);
+
   const handleMarkAsScam = async (user: User) => {
-    if (!confirm(`Mark ${user.name} as SCAM? This will set their tag to SCAM with a red background.`)) {
-      return;
-    }
+    setScamUser(user);
+    setScamDialogOpen(true);
+  };
+
+  const confirmMarkAsScam = async () => {
+    if (!scamUser) return;
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${user.id}/tag`,
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/admin/users/${scamUser.id}/tag`,
         {
           method: "POST",
           headers: {
@@ -654,8 +678,10 @@ export default function AdminPanel() {
         return;
       }
 
-      toast.success(`${user.name} marked as SCAM`);
+      toast.success(`${scamUser.name} marked as SCAM`);
       setUserMenuOpen(false);
+      setScamDialogOpen(false);
+      setScamUser(null);
       loadAllUsers();
     } catch (error) {
       console.error("Mark as scam error:", error);
@@ -694,6 +720,41 @@ export default function AdminPanel() {
     } catch (error) {
       console.error("Toggle moderator error:", error);
       toast.error("Failed to update moderator status");
+    }
+  };
+
+  const handleAddCoins = async (user: User, amount: number) => {
+    try {
+      const updatedUser = {
+        ...user,
+        coins: ((user as any).coins || 0) + amount
+      };
+
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/kv/set`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            key: `user:${user.id}`,
+            value: updatedUser
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to add coins");
+      }
+
+      toast.success(`Added ${amount} coins to ${user.name}! New balance: ${updatedUser.coins}`);
+      setUserMenuOpen(false);
+      loadAllUsers();
+    } catch (error) {
+      console.error("Add coins error:", error);
+      toast.error("Failed to add coins");
     }
   };
 
@@ -2194,10 +2255,10 @@ export default function AdminPanel() {
 
               <Button
                 variant="outline"
-                className="w-full justify-start border-gray-700 hover:bg-gray-800"
+                className="w-full justify-start border-gray-700 hover:bg-gray-800 text-red-400"
                 onClick={() => handleMarkAsScam(selectedUser)}
               >
-                <AlertTriangle className="size-4 mr-2 text-red-500" />
+                <AlertTriangle className="size-4 mr-2" />
                 Mark as SCAM
               </Button>
 
@@ -2209,6 +2270,32 @@ export default function AdminPanel() {
                 <Shield className="size-4 mr-2" />
                 {selectedUser.moderator ? "Remove from Moderators" : "Promote to Moderator"}
               </Button>
+
+              {/* Coin Management */}
+              <div className="space-y-2 pt-2 border-t border-gray-700">
+                <div className="flex items-center justify-between text-sm text-gray-300">
+                  <span>Coins:</span>
+                  <span className="font-bold text-purple-400">{(selectedUser as any).coins || 0}</span>
+                </div>
+                {(selectedUser as any).subscription?.tier && new Date((selectedUser as any).subscription.expiresAt) > new Date() && (
+                  <div className="flex items-center justify-between text-xs text-gray-300">
+                    <span>Subscription:</span>
+                    <span className={`px-2 py-0.5 rounded font-semibold ${(selectedUser as any).subscription.tier === 'ultra' ? 'bg-gradient-to-r from-pink-500 to-purple-500' : 'bg-gradient-to-r from-purple-500 to-pink-400'} text-white`}>
+                      {(selectedUser as any).subscription.tier === 'ultra' ? 'ChozaBoost Ultra' : 'ChozaBoost'}
+                    </span>
+                  </div>
+                )}
+                <Button
+                  variant="outline"
+                  className="w-full justify-start bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-yellow-500 hover:to-orange-500 text-white border-0"
+                  onClick={() => {
+                    setCoinsAmount("");
+                    setAddCoinsDialogOpen(true);
+                  }}
+                >
+                  💰 Add Coins
+                </Button>
+              </div>
 
               <Button
                 variant="destructive"
@@ -2222,9 +2309,27 @@ export default function AdminPanel() {
           )}
 
           {selectedUser && selectedUser.id === userId && (
-            <p className="text-center text-gray-400 py-4">
-              You cannot perform actions on your own account
-            </p>
+            <div className="space-y-2">
+              <p className="text-center text-gray-400 py-2 text-sm">
+                Your own account
+              </p>
+              <div className="space-y-2 pt-2 border-t border-gray-700">
+                <div className="flex items-center justify-between text-sm text-gray-300">
+                  <span>Your Coins:</span>
+                  <span className="font-bold text-purple-400">{(selectedUser as any).coins || 0}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-yellow-500 hover:to-orange-500 text-white border-0"
+                  onClick={() => {
+                    setCoinsAmount("");
+                    setAddCoinsDialogOpen(true);
+                  }}
+                >
+                  💰 Add Coins to Self
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -2289,9 +2394,7 @@ export default function AdminPanel() {
               <Button
                 key="scam-btn"
                 onClick={async () => {
-                  if (!confirm(`Mark "${selectedChannel.name}" as SCAM? This will display a SCAM badge on the channel.`)) {
-                    return;
-                  }
+                  setScamDialogOpen(true);
                   
                   try {
                     // Mark channel as SCAM by setting its tag
@@ -2331,9 +2434,7 @@ export default function AdminPanel() {
               <Button
                 key="delete-btn"
                 onClick={async () => {
-                  if (!confirm(`Delete "${selectedChannel.name}"? This will permanently delete the channel and all its messages. This action cannot be undone.`)) {
-                    return;
-                  }
+                  setDeleteUserDialogOpen(true);
                   
                   try {
                     const response = await fetch(
@@ -2404,6 +2505,110 @@ export default function AdminPanel() {
             >
               <Trash2 className="size-4 mr-2" />
               Delete {selectedUserIds.size} User{selectedUserIds.size > 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Coins Dialog */}
+      <Dialog open={addCoinsDialogOpen} onOpenChange={setAddCoinsDialogOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle>Add Coins</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {selectedUser ? `Add coins to ${selectedUser.name}'s balance (current: ${(selectedUser as any).coins || 0} coins)` : 'Add coins'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="coinsAmount" className="text-white">Amount of Coins</Label>
+              <Input
+                id="coinsAmount"
+                type="number"
+                value={coinsAmount}
+                onChange={(e) => setCoinsAmount(e.target.value)}
+                className="mt-2 bg-gray-800 border-gray-700 text-white"
+                placeholder="Enter amount"
+                min="0"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddCoinsDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-yellow-500 hover:to-orange-500"
+              onClick={() => {
+                const amount = parseInt(coinsAmount);
+                if (selectedUser && amount > 0) {
+                  handleAddCoins(selectedUser, amount);
+                  setAddCoinsDialogOpen(false);
+                }
+              }}
+            >
+              Add Coins
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <Dialog open={deleteUserDialogOpen} onOpenChange={setDeleteUserDialogOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-red-500">⚠️ Delete User</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {userToDelete ? `Delete user ${userToDelete.name}? This action cannot be undone.` : 'Delete user?'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
+            <p className="text-sm text-yellow-200">
+              <strong>Warning:</strong> This will permanently delete the user and all their data.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteUserDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteUser}>
+              <Trash2 className="size-4 mr-2" />
+              Delete User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark as SCAM Confirmation Dialog */}
+      <Dialog open={scamDialogOpen} onOpenChange={setScamDialogOpen}>
+        <DialogContent className="bg-gray-900 border-gray-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-red-500">⚠️ Mark as SCAM</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {scamUser ? `Mark ${scamUser.name} as SCAM? This will set their tag to SCAM with a red background.` : 'Mark as SCAM?'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-4">
+            <p className="text-sm text-red-200">
+              <strong>Warning:</strong> This will publicly mark this user as a scammer.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScamDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={confirmMarkAsScam}
+            >
+              <AlertTriangle className="size-4 mr-2" />
+              Mark as SCAM
             </Button>
           </DialogFooter>
         </DialogContent>

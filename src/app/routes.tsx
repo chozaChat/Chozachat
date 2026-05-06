@@ -11,6 +11,7 @@ import CustomLanguageEditor from "./pages/CustomLanguageEditor";
 import SetLanguage from "./pages/SetLanguage";
 import ViewStickerPack from "./pages/ViewStickerPack";
 import StickerPack from "./pages/StickerPack";
+import BotBuilder from "./pages/BotBuilder";
 import NotFound from "./pages/NotFound";
 
 export const router = createHashRouter([
@@ -25,6 +26,8 @@ export const router = createHashRouter([
       { path: "lang", element: <CustomLanguageEditor /> },
       { path: "lang/:languagename", element: <CustomLanguageEditor /> },
       { path: "setlang/:name", element: <SetLanguage /> },
+      { path: "bots", element: <BotBuilder /> },
+      { path: "bots/:botid", element: <BotBuilder /> },
       { path: "u/:username", element: <InviteUser /> },
       { path: "g/:groupname", element: <InviteGroup /> },
       { path: "c/:channelname", element: <InviteChannel /> },

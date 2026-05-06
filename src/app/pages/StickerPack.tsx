@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router";
 import { projectId, publicAnonKey } from '/utils/supabase/info';
-import { X, Plus, Download, Trash2 } from "lucide-react";
+import { pb } from "../../lib/pocketbase";
+import { compressImage, getLimits, getSubscriptionTier } from "../../lib/imageCompression";
+import { X, Plus, Download, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "../contexts/LanguageContext";
 
@@ -42,11 +44,14 @@ export default function StickerPack() {
   const [editingName, setEditingName] = useState(false);
   const [newPackName, setNewPackName] = useState('');
   const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [userSubscription, setUserSubscription] = useState<{ tier: 'boost' | 'ultra' | null; expiresAt?: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const userId = localStorage.getItem('userId');
     if (userId) {
       setCurrentUserId(userId);
+      loadUserSubscription(userId);
     }
     loadPack();
   }, [packName]);
@@ -115,21 +120,75 @@ export default function StickerPack() {
     }
   };
 
-  const startCropping = () => {
-    if (!imageUrl.trim()) {
-      toast.error(t('sticker.enterUrl'));
-      return;
+  const loadUserSubscription = async (userId: string) => {
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/${SERVER_ID}/user/${userId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'X-User-Id': userId,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setUserSubscription(data.user?.subscription || null);
+      }
+    } catch (error) {
+      console.error("Failed to load user subscription:", error);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      // Get subscription tier
+      const subscriptionTier = getSubscriptionTier(userSubscription || undefined);
+      const limits = getLimits(subscriptionTier, 'stickers');
+
+      // Validate file size
+      if (file.size > limits.maxUploadSize * 1024 * 1024) {
+        toast.error(`Image must be smaller than ${limits.maxUploadSize}MB (${subscriptionTier} tier)`);
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error("Please upload an image file");
+        return;
+      }
+
+      toast.info("Compressing sticker...");
+
+      // Compress image
+      const compressedBlob = await compressImage(file, limits.maxCompressedSize, 'stickers');
+
+      // Create a temporary URL for cropping
+      const tempUrl = URL.createObjectURL(compressedBlob);
+
+      // Store compressed blob for later upload
+      (window as any).__tempStickerBlob = compressedBlob;
+      (window as any).__tempStickerFilename = file.name;
+
+      setCropImage(tempUrl);
+      setCropping(true);
+
+      const originalSizeKB = (file.size / 1024).toFixed(1);
+      const compressedSizeKB = (compressedBlob.size / 1024).toFixed(1);
+      toast.success(`Compressed! ${originalSizeKB}KB → ${compressedSizeKB}KB`);
+    } catch (error) {
+      console.error("File upload error:", error);
+      toast.error("Failed to process image");
     }
 
-    // Validate URL has image extension
-    const hasImageExt = /\.(png|jpg|jpeg|gif|webp)$/i.test(imageUrl);
-    if (!hasImageExt) {
-      toast.error(t('sticker.invalidUrl'));
-      return;
+    // Reset file input
+    if (event.target) {
+      event.target.value = '';
     }
-
-    setCropImage(imageUrl);
-    setCropping(true);
   };
 
   const handleMouseDown = (e: React.MouseEvent, type: 'move') => {
@@ -218,30 +277,66 @@ export default function StickerPack() {
   };
 
   const finishCrop = async () => {
-    if (!pack) return;
+    if (!pack || !packName) return;
 
-    // Save sticker with crop metadata instead of cropping with Canvas
-    const newSticker: Sticker = {
-      id: `sticker-${Date.now()}`,
-      imageUrl: cropImage,
-      sourceUrl: cropImage,
-      cropData: {
-        x: cropArea.x,
-        y: cropArea.y,
-        size: cropArea.size
+    try {
+      toast.info("Uploading sticker...");
+
+      // Get the compressed blob from temporary storage
+      const compressedBlob = (window as any).__tempStickerBlob;
+      const filename = (window as any).__tempStickerFilename || 'sticker.jpg';
+
+      if (!compressedBlob) {
+        toast.error("No image data found");
+        return;
       }
-    };
 
-    const updatedPack = {
-      ...pack,
-      stickers: [...pack.stickers, newSticker]
-    };
+      // Create FormData for PocketBase upload
+      const formData = new FormData();
+      const file = new File([compressedBlob], filename, { type: 'image/jpeg' });
+      formData.append('image', file);
+      formData.append('name', `${packName}-${Date.now()}`);
+      formData.append('pack', packName);
+      formData.append('createdBy', currentUserId);
 
-    await savePack(updatedPack);
-    setCropping(false);
-    setImageUrl('');
-    setCropImage('');
-    toast.success(t('sticker.stickerAdded'));
+      // Upload to PocketBase stickers collection
+      const record = await pb.collection('stickers').create(formData);
+
+      // Get the uploaded image URL
+      const imageUrl = pb.files.getUrl(record, record.image);
+
+      // Save sticker with crop metadata
+      const newSticker: Sticker = {
+        id: record.id,
+        imageUrl: imageUrl,
+        sourceUrl: imageUrl,
+        cropData: {
+          x: cropArea.x,
+          y: cropArea.y,
+          size: cropArea.size
+        }
+      };
+
+      const updatedPack = {
+        ...pack,
+        stickers: [...pack.stickers, newSticker]
+      };
+
+      await savePack(updatedPack);
+
+      // Clean up temporary storage
+      URL.revokeObjectURL(cropImage);
+      delete (window as any).__tempStickerBlob;
+      delete (window as any).__tempStickerFilename;
+
+      setCropping(false);
+      setImageUrl('');
+      setCropImage('');
+      toast.success(t('sticker.stickerAdded'));
+    } catch (error) {
+      console.error("Failed to upload sticker:", error);
+      toast.error("Failed to upload sticker");
+    }
   };
 
   const deleteSticker = async (stickerId: string) => {
@@ -429,21 +524,32 @@ export default function StickerPack() {
           {/* Add Sticker Section */}
           <div className="mb-8 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <h2 className="text-xl font-bold dark:text-white mb-4">{t('sticker.addSticker')}</h2>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                placeholder={t('sticker.pasteUrl')}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-white"
-              />
-              <button
-                onClick={startCropping}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                <Plus className="size-4" />
-                {t('sticker.cropAndAdd')}
-              </button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-blue-600 text-white rounded-lg hover:from-green-700 hover:to-blue-700 transition-all"
+                >
+                  <Upload className="size-5" />
+                  Upload Sticker Image
+                </button>
+              </div>
+              <div className="text-xs text-gray-600 dark:text-gray-400">
+                {userSubscription?.tier === 'ultra' ? (
+                  <>Max 15MB upload, compressed to ~100KB</>
+                ) : userSubscription?.tier === 'boost' ? (
+                  <>Max 10MB upload, compressed to ~75KB</>
+                ) : (
+                  <>Max 5MB upload, compressed to ~50KB</>
+                )}
+              </div>
             </div>
           </div>
 

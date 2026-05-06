@@ -185,6 +185,30 @@ export const translations: Record<Language, Record<string, string>> = {
     'profile.deleted': 'deleted',
     'profile.linkCopied': 'link copied!',
 
+    // Fast Commands
+    'command.weather': 'Weather',
+    'command.weatherFor': 'Weather for',
+    'command.temp': 'Temperature',
+    'command.feelsLike': 'Feels like',
+    'command.humidity': 'Humidity',
+    'command.wind': 'Wind',
+    'command.usage': 'Usage',
+    'command.weatherUsage': '/weather [location] or type "weather [location]"',
+    'command.timeUsage': '/time [timezone] or type "time [timezone]"',
+    'command.helpUsage': '/help or type "help"',
+    'command.invalidCommand': 'Unknown command. Type /help for available commands',
+    'command.weatherError': 'Could not fetch weather data',
+    'command.timeError': 'Could not fetch time data',
+    'command.enterLocation': 'Please enter a location',
+    'command.enterTimezone': 'Please enter a timezone',
+    'command.availableCommands': 'Available Fast Commands',
+    'command.time': 'Current Time',
+
+    // User Tagging
+    'tag.viewProfile': 'View Profile',
+    'tag.sendMessage': 'Send Message',
+    'tag.noUsersFound': 'No users found',
+
     // Stickers
     'sticker.viewPack': 'View Pack',
     'sticker.addToPacks': 'Add to My Packs',
@@ -414,6 +438,30 @@ export const translations: Record<Language, Record<string, string>> = {
     'profile.memberRemoved': 'Участник удалён',
     'profile.deleted': 'удалено',
     'profile.linkCopied': 'ссылка скопирована!',
+
+    // Fast Commands
+    'command.weather': 'Погода',
+    'command.weatherFor': 'Погода для',
+    'command.temp': 'Температура',
+    'command.feelsLike': 'Ощущается как',
+    'command.humidity': 'Влажность',
+    'command.wind': 'Ветер',
+    'command.usage': 'Использование',
+    'command.weatherUsage': '/weather [локация] или напишите "погода [локация]"',
+    'command.timeUsage': '/time [часовой пояс] или напишите "время [часовой пояс]"',
+    'command.helpUsage': '/help или напишите "помощь"',
+    'command.invalidCommand': 'Неизвестная команда. Напишите /help для списка команд',
+    'command.weatherError': 'Не удалось получить данные о погоде',
+    'command.timeError': 'Не удалось получить данные о времени',
+    'command.enterLocation': 'Пожалуйста, введите локацию',
+    'command.enterTimezone': 'Пожалуйста, введите часовой пояс',
+    'command.availableCommands': 'Доступные быстрые команды',
+    'command.time': 'Текущее время',
+
+    // User Tagging
+    'tag.viewProfile': 'Посмотреть профиль',
+    'tag.sendMessage': 'Отправить сообщение',
+    'tag.noUsersFound': 'Пользователи не найдены',
 
     // Stickers
     'sticker.viewPack': 'Посмотреть пак',
